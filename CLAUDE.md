@@ -15,6 +15,10 @@ Project gồm 2 phần, mô tả riêng bên dưới:
   hay bất kỳ file nào khác.**
 - Job dài trên máy này hay bị ngắt: chạy foreground (hoặc train trên Colab). Job đã bị kill thì không
   tự chạy lại khi user chưa yêu cầu.
+- Repo GitHub (`wetaxsetting/we-scraping`) không chứa `env/`, `env_pass/`, `output/`, `.env`, `example/`.
+  `runs/` chỉ đưa `best.pt` (Git LFS) + `history.csv` của nhóm đang dùng thật: `g_600x120`, `g_150x34`,
+  `g_80x30`, `g_1500x350`. Adapter mới dùng nhóm khác → thêm `!runs/<nhóm>/` vào `.gitignore`.
+  Máy mới: cài Git LFS trước khi clone, nếu không `best.pt` chỉ là file trỏ vài trăm byte và không nạp được.
 - Báo cáo tuần: `report/Bao-cao-tuan-<tuần>-<năm>.docx` + bản tiếng Anh `report/Weekly-report-W<tuần>-<năm>.docx`
   (cùng nội dung, sửa bản nào thì sửa cả hai). Số liệu lấy từ `invoice_job.py status`,
   DB (`invoice_pdf.source_id`) và `runs/<nhóm>/history.csv` / `evaluate`, không ước đoán.

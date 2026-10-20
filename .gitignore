@@ -47,3 +47,16 @@ Sample/
 # Build C# (captcha-botdetect)
 bin/
 obj/
+
+# Model đang dùng thật (Git LFS, xem .gitattributes) — chỉ best.pt + history.csv:
+#   g_600x120 đăng nhập Thuế | g_150x34 EasyInvoice | g_80x30 VNPT | g_1500x350 Visnam
+# Dùng thêm nhóm nào (adapter mới) thì thêm 1 dòng !runs/<nhóm>/ ở đây.
+!runs/
+runs/*
+!runs/g_600x120/
+!runs/g_150x34/
+!runs/g_80x30/
+!runs/g_1500x350/
+runs/*/*
+!runs/*/best.pt
+!runs/*/history.csv
