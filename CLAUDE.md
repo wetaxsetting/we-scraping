@@ -1,0 +1,379 @@
+# CLAUDE.md
+
+Project gồm 2 phần, mô tả riêng bên dưới:
+
+- **PHẦN 1 – Train captcha:** model CRNN đọc captcha, mỗi nhóm kích thước ảnh một model.
+- **PHẦN 2 – Xử lý hóa đơn (XML → PDF):** đăng nhập hoadondientu.gdt.gov.vn bằng model captcha
+  → tải XML → parse theo QĐ 1233 → lưu PostgreSQL → lấy PDF bản gốc (site tra cứu NCC / mail).
+
+## Chung
+
+- Môi trường: Windows, PowerShell 5.1, Python 3.13, CPU-only, RAM ít.
+  Luôn chạy `python -X utf8 ...`, vì thiếu cờ này thì console Windows hỏng tiếng Việt.
+- `example/` **chỉ để tham khảo**, không sửa. Mọi source nằm ở thư mục gốc, `captcha/`, `web/`, `pdf_providers/`.
+- Bí mật chỉ nằm trong `.env`. **Không in nội dung `.env`, không chép mật khẩu vào `.env.example`
+  hay bất kỳ file nào khác.**
+- Job dài trên máy này hay bị ngắt: chạy foreground (hoặc train trên Colab). Job đã bị kill thì không
+  tự chạy lại khi user chưa yêu cầu.
+- Báo cáo tuần: `report/Bao-cao-tuan-<tuần>-<năm>.docx` + bản tiếng Anh `report/Weekly-report-W<tuần>-<năm>.docx`
+  (cùng nội dung, sửa bản nào thì sửa cả hai). Số liệu lấy từ `invoice_job.py status`,
+  DB (`invoice_pdf.source_id`) và `runs/<nhóm>/history.csv` / `evaluate`, không ước đoán.
+
+---
+
+# PHẦN 1 – TRAIN CAPTCHA
+
+Chi tiết thiết kế (preprocessing, model, augmentation, ONNX) xem [README.md](README.md).
+
+## 1.1 Cấu trúc
+
+| Thành phần | Vai trò |
+|---|---|
+| `env/<nhóm>/<số>_<nhãn>.png` | Dữ liệu train. **Nhãn nằm trong tên file**, nên sửa nhãn = đổi tên file |
+| `configs/groups.yaml` | Mỗi nhóm: charset, kích thước đưa vào model, ghi chú. Sinh bằng `inspect_data`, rồi sửa tay |
+| `runs/<nhóm>/best.pt` | Checkpoint tốt nhất. `meta` lưu `charset` + `config_hash` của lúc train |
+| `runs/<nhóm>/history.csv` | Từng epoch: `train_loss, val_loss, val_em` (đúng cả chuỗi), `val_char_acc`, `sec` |
+| `captcha/` | `train`, `evaluate`, `predict`, `export_onnx`, `inspect_data`, `config`, `dataset`, `model` |
+| `gdt_captcha_solver.py` | Captcha GDT: SVG 200x40 → render PNG ×3 (600x120) → nhóm `g_600x120` |
+| `pdf_providers/common.py` | `solve_captcha(img, group_id, min_conf)` cho các site tra cứu NCC |
+
+## 1.2 Lệnh
+
+```powershell
+python -X utf8 -m captcha.inspect_data --report --write-config      # quét env/, sinh configs/groups.yaml
+python -X utf8 -m captcha.train --group <nhóm>                      # train 1 nhóm (xem README: --all, smoke test)
+python -X utf8 -m captcha.predict --dir <thư mục> --labels-from-filename   # đo nhanh trên ~200 mẫu có nhãn
+python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --num-workers 0 --data-dir env/<nhóm>
+# export_onnx: xem README
+```
+
+## 1.3 Những điểm dễ sai
+
+- **Đổi `charset`/config sau khi train thì phải train lại.** Predictor từ chối nạp checkpoint có charset
+  khác config. Ví dụ `g_120x40_vnpt`: bản train 09/10 bị lệch charset nên không nạp được; đã train lại 14/10
+  với config hiện tại (xem 1.4).
+- **`evaluate`/`train` đọc PNG phẳng trong `--data-dir`, không đọc thư mục con.** Trên máy này ảnh nằm ở
+  `env/<nhóm>/` (config còn ghi `data_dir: pass`) → luôn truyền `--data-dir env/<nhóm>`. Nhóm trùng cỡ ảnh
+  (vd `g_120x40_vnpt` và `g_120x40_cloud` đều 120x40) bắt buộc phải trỏ đúng thư mục của nhóm.
+- **Mẫu cho mỗi ký tự quyết định nhóm có học được hay không**, không phải số ảnh hay độ sạch của nhãn.
+  Tính `sum(len(nhãn)) / len(charset)` trên tập train. Dưới khoảng **250 mẫu/ký tự** thì chưa nhóm nào
+  thoát được plateau CTC (val_em = 0); khi đó câu trả lời đúng là "thu thêm ảnh".
+- **Khi đã trên ngưỡng đó, nhãn sai mới là giới hạn.** Ví dụ `g_1500x350` tăng 70% → 96% chỉ nhờ sửa nhãn,
+  không thêm ảnh nào. Model đọc ra kết quả khác nhãn thì kiểm tra nhãn trước (vd `1`/`I`/`l`, `0`/`O`).
+- **Luôn ép đúng nhóm khi đọc (`enforce_group`).** Router chọn nhóm theo kích thước ảnh. Gặp captcha lạ
+  trùng kích thước, nó vẫn đọc sai mà báo độ tin cao, không có cảnh báo. Nguồn captcha mới phải có nhóm
+  riêng với khoảng 500–2.000 mẫu có nhãn.
+- **Cache index không nhận ra file bị đổi tên.** Chữ ký cache chỉ gồm số file, tổng dung lượng và mtime mới
+  nhất, nên sửa nhãn xong cache vẫn "hợp lệ". Số lượng tập train nghi ngờ → quét lại với cache trống.
+- **Checkpoint train trước 19/10 có thể ghi sai `meta.charset`** (đã sửa `train.py` 19/10): bản cũ lưu
+  charset **trong config** thay vì charset **core đã suy từ data**. Với `charset_mode: core`, hai cái này
+  khác nhau khi data có ký tự đuôi hiếm → model encode theo core nhưng decode theo config, **mọi ký tự
+  lệch index** (vd `a→8`, `h→g`, `V→U`), test tụt về 0–10% dù model train tốt.
+  Dấu hiệu: `meta.note` ghi "core alphabet (N chars)" nhưng `len(meta.charset) != N`, và
+  `fc.weight` có `N+1` hàng không khớp. Checkpoint 4 nhóm `g_600x120`, `g_200x70`, `g_180x50_vn`,
+  `g_180x50_tax24` đã vá lại meta 19/10 (bản gốc giữ ở `runs/<nhóm>/*.pt.bak`).
+  Gặp `evaluate` báo charset mismatch → kiểm `meta.note` trước, **đừng vội đổi config sang `fixed`**:
+  làm vậy model nạp được nhưng đọc sai toàn bộ.
+- Báo kết quả theo **test**, không theo val: hai số có thể lệch vài phần trăm. Bảng 1.4 là val_em
+  (từ history.csv); muốn số chính xác thì chạy evaluate trên tập test.
+- **Thời gian train** (đo từ history): `g_600x120` bản 17/10 ~39,6 giờ (54 epoch, 13.757 ảnh),
+  `g_200x70` ~43,2 giờ (113 epoch), `g_180x50_vn` ~24,5 giờ (52 epoch), `g_180x50_tax24` ~3 giờ
+  (53 epoch, 1.000 ảnh); `g_160x60` ~38 giờ, `g_120x40_vnpt` bản 14/10 ~30 giờ. Nhóm lớn nên train
+  trên GPU/Colab. Train xong mang sang: chép **đúng 2 file** `runs/<nhóm>/best.pt` + `history.csv`,
+  rồi chạy `evaluate --split test` để xác nhận. **`env/<nhóm>` ở máy này phải y hệt data lúc train**,
+  vì `core` suy charset từ data — thêm/bớt ảnh xong là charset đổi và checkpoint hết nạp được.
+- Cột "Train cho AI(%)" (cột K, sheet "Chi tiết" trong `docs/Danh_sach_NCC.xlsx`) **đã đồng bộ 20/10** theo
+  val_em tốt nhất trong `runs/<nhóm>/history.csv` (riêng `g_200x70` ghi test 89,24% của 17/10, xem 1.4); trước đó
+  lệch nhiều (vd `g_160x60` ghi 0% nhưng thật 99,75%; `g_150x39` ghi 84,85%, `g_160x75` 74% nhưng history
+  chỉ 2,3% / 0%). Cột L đổi `g_120x40` → `g_120x40_vnpt` (VNPT) / `g_120x40_cloud` (Nhóm Mây). Chưa có thư
+  mục `runs/` nên giữ nguyên: My-Invoice `g_180x45` (94,47%), Lạc Việt `g_150x32` (0%), VNISC
+  `g_150x50_1` (trống). Train xong nhóm nào thì cập nhật lại cột K từ history.csv.
+
+## 1.4 Tình trạng các nhóm (val_em tốt nhất, 19/10/2026)
+
+| Nhóm | Dùng cho | val_em | Tình trạng |
+|---|---|---|---|
+| `g_600x120` | Đăng nhập GDT | 89,0% | **Đang dùng thật.** Train lại 16–17/10 với 13.757 ảnh (cũ 1.784): test 87,30% (1.370 ảnh), char 97,79%. Nhầm chính `X↔K`, `Y→K`, `P↔R` |
+| `g_180x50_tax24` | VN-Invoice, TAX24… | 100% | **Train 15/10, tốt nhất hiện có**: test 98,99% (99 ảnh), char 99,80%. n=1.000. Đổi tên từ `g_180x50_lower` |
+| `g_200x70` | Thái Sơn (einvoice.vn) | 89,2% | **Học được sau khi sửa nhãn** (upper hết + bỏ nhãn có chữ số): test 89,24% (1.125 ảnh), char 97,24%. n=11.311. Lỗi còn lại chủ yếu là sai độ dài (`4→3`). ⚠ **20/10 09:48 `best.pt`/`last.pt`/`history.csv` bị 1 lượt train 1 epoch ghi đè (val_em 0)** — chỉ còn `best.pt.bak` 17/10 (meta charset chưa vá); cần chép lại bản tốt từ máy train |
+| `g_180x50_vn` | vninvoice.vn (`tracuu.v50.vninvoice.vn`; VN-Invoice MST 0101352495 / "VNISC" dòng 46 Excel MST 0103018807) | 63,6% | Train 16/10 với 11.632 ảnh: test 62,32% (1.043 ảnh), char 92,09%. **Chưa dùng được** — nhầm hoa/thường (`B→b`…), xem 1.5. Chưa có HĐ thật dùng cổng này (kiểm DB 20/10) |
+| `g_120x40_vnpt` | VNPT cổng HST chung (captcha API `get-captcha?width=120&height=40`) | 98,3% | **Train lại 14/10, dùng được**: test 98,59% (1.206 ảnh), char 99,32%; captcha thật 6/6. Chưa adapter nào cần (HST không kiểm captcha phía server) |
+| `g_120x38` | Megabiz (vinvoice) | 100% | OK |
+| `g_160x60` | WEBCASH (wetax) | 99,75% | OK (server nhận 6/6) |
+| `g_80x30` | VNPT cổng riêng (Petrolimex) | 98,0% | Đang dùng trong adapter `vnpt` |
+| `g_300x75` | CyberLotus / Liên Sơn / My-Invoice (xcyber) | 97,7% | OK |
+| `g_150x34` | EasyInvoice | 96,0% | Đang dùng trong adapter `easyinvoice` |
+| `g_1500x350` | Visnam | 96,0% | Đang dùng trong adapter `visnam` (thật 11/11) |
+| `g_120x40_cloud` | Cloudteam | 94,7% | OK |
+| `g_194x35` | PVOIL | 91,8% | OK |
+| `g_180x64` | — | 75,2% | Cần thêm dữ liệu |
+| `g_70x23`, `g_250x40`, `g_200x80`, `g_150x39` | Bitware, VDSG, Ngô Gia Phát, SmartSign | 2–24% | Chưa dùng được |
+| `g_150x30`, `g_160x75` | ASIA, hoadon30s | 0% | Chưa từng học được |
+
+## 1.5 Kế hoạch train (theo ưu tiên)
+
+1. ~~`g_120x40_vnpt`~~: đã train lại 14/10 (test 98,59%).
+2. ~~`g_200x70`~~ (Thái Sơn, einvoice.vn): xong 17/10, test 89,24%. Sửa nhãn (upper hết, bỏ nhãn có
+   chữ số) đưa nhóm này từ 0% lên 89% — đúng mô-típ "nhãn sai mới là giới hạn" ở 1.3.
+   Adapter Thái Sơn ở 2.6 giờ train được rồi.
+3. `g_180x50_vn` thuộc nền tảng **vninvoice.vn** (`tracuu.v50.vninvoice.vn` — VN-Invoice MST 0101352495
+   / "VNISC" dòng 46 Excel MST 0103018807), **KHÔNG phải** invoice.abcsys.vn/MSTTCGP 0102331762 như
+   nhầm trước đây (đổi tên `g_180x50_vnisc` → `g_180x50_vn` 20/10 cho rõ, tránh lẫn với mục 4).
+   Captcha thật **180x50, bảng chữ hỗn hợp hoa/thường/số** (không phải 6 chữ số như đoán ban đầu lúc
+   khảo sát qua trang). Trùng cỡ với `g_180x50_tax24` nên phải giữ là nhóm riêng, adapter ép đúng tên
+   nhóm. **Train 16/10 với 11.632 ảnh (52 lớp ký tự) chỉ ra 62,32% test, char 92,09%** — đã vượt xa
+   ngưỡng ~250 mẫu/ký tự nên thiếu dữ liệu không còn là nguyên nhân. Lỗi còn lại là **nhầm hoa/thường**
+   (`B→b`…), tức giới hạn nằm ở chỗ 52 lớp có nhiều cặp gần như không phân biệt được ở 180x50.
+   Hướng tiếp: kiểm nhãn các cặp hoa/thường, hoặc bỏ phân biệt hoa/thường nếu site chấp nhận.
+   **Chưa có HĐ thật nào dùng cổng này** (kiểm DB 20/10: 0 dòng với nbmst 0101352495/0103018807) nên
+   chưa cấp thiết; giữ lại phòng khi phát sinh HĐ từ 1 trong 2 MST đó.
+4. **VNISC thật — MSTTCGP 0102331762** (`invoice.abcsys.vn`, mã `MTCuu`): có **3 HĐ thật** (Bảo Gia
+   Trần C26TBV-238805; Dặm Vàng C26TSS-1198, C26TSS-981) nhưng **chưa có model captcha nào** cho đúng
+   site này — trước đây nhầm gán `g_180x50_vnisc` (nay là mục 3, thuộc vninvoice.vn, khác site). User
+   đang tự tra tay 3 mã trên tại invoice.abcsys.vn để xác nhận lại kích thước/kiểu captcha thật, trước
+   khi thu thập mẫu train nhóm riêng (PHẦN 2, mục 2.6).
+5. `g_100x30` mới (FAST, einvoice.fast.com.vn): 5 ký tự hoa/thường lẫn lộn, cần nhiều mẫu.
+6. Các nhóm < 25%: làm khi phát sinh hóa đơn thật từ NCC đó.
+
+Train xong 1 nhóm của NCC đã có cổng: cập nhật adapter tương ứng ở PHẦN 2 (mục 2.6).
+
+---
+
+# PHẦN 2 – XỬ LÝ HÓA ĐƠN (XML → PDF)
+
+## 2.1 Quy tắc
+
+- `tick`, `sweep` và `add-company` đăng nhập GDT bằng tài khoản thuế thật và ghi DB thật. Chỉ chạy
+  khi user đồng ý. Test DB (`tests/test_invoice_store.py`) tạo schema tạm trong DB, cũng phải hỏi trước.
+- Code chỉ xóa dữ liệu ở đúng 1 chỗ: `replace_details` xóa dòng `invoice_details` cũ trước khi ghi lại.
+  User đôi khi chủ động xóa bảng `invoices` để đổ lại data, nên thấy DB trống không phải lỗi job.
+  `tick` tự lấy lại 30 ngày gần nhất; tháng cũ hơn thì chạy `sweep`.
+
+## 2.2 Lệnh
+
+```powershell
+# Cài đặt
+pip install -r requirements.txt -r requirements-invoice.txt
+playwright install chromium                     # adapter VNPT dựng PDF từ HTML
+
+# Job (cấu hình trong .env: DATABASE_URL, HDT_PASSWORD_<MST>, INVOICE_MAIL_*, INVOICE_LIST_SOURCE)
+python -X utf8 web/invoice_job.py init-db
+python -X utf8 web/invoice_job.py add-company --mst 1201496252 --username 1201496252-U002 --name "..."
+python -X utf8 web/invoice_job.py tick          # 1 lượt đầy đủ = xml → mail → pdf (Task Scheduler gọi)
+# 3 bước của tick, chạy riêng được (mỗi lệnh 1 hàm riêng, dùng chung khóa nên không chạy chồng):
+python -X utf8 web/invoice_job.py xml [--company MST] [--limit N]   # B1: chỉ GDT — danh sách + tải XML (đăng nhập GDT)
+python -X utf8 web/invoice_job.py mail [--days 7] [--limit N]       # B2: đọc mail hóa đơn (IMAP, chỉ đọc) + link → adapter
+python -X utf8 web/invoice_job.py pdf [--company MST] [--limit N]   # B3: chỉ PDF từ site NCC, KHÔNG đăng nhập GDT
+python -X utf8 web/invoice_job.py sweep [--month 2026-09]           # quét lại cả tháng (HĐ lên GDT muộn)
+python -X utf8 web/invoice_job.py status        # hộp chờ, lỗi, NCC chưa có adapter, HĐ hthdon=2, mail
+python -X utf8 web/invoice_job.py requeue --status dead|no_source [--type xml|pdf] [--mst-tcgp X]
+python -X utf8 web/invoice_job.py set-provider --mst-tcgp X --source-id Y
+
+# Tải PDF cho XML có sẵn trên đĩa (không cần DB, không gọi GDT)
+python -X utf8 web/fetch_pdf.py --company 1201496252 [--dry-run] [--mst-tcgp X] [--seller MST] [--limit N] [--force]
+
+# Lịch chạy tự động (Windows Task Scheduler, mặc định 06:30 / 12:30 / 19:00)
+powershell -ExecutionPolicy Bypass -File scripts\register_invoice_tasks.ps1
+
+# Test phần hóa đơn (offline; test DB tự skip khi không có TEST_DATABASE_URL).
+# PowerShell không tự mở rộng tests/test_pdf_*.py → dùng -k thay vì glob.
+python -X utf8 -m pytest tests -q -k "invoice or xml_parser or fetch_pdf or pdf_ or mail or main_auto"
+```
+
+```powershell
+# Lấy HĐ theo khoảng ngày tự chọn → DB (chạy tay; cùng luồng với job, không làm lệch mốc đồng bộ của tick)
+python -X utf8 web/main_auto.py --from 2026-08-01 --to 2026-09-30 [--company MST] [--type all|mua-all|ban-all] [--pdf] [--excel]
+```
+
+`web/main_auto.py` (từ 14/10) **ghi thẳng vào DB** qua đúng các hàm của job (`sync_lists` với
+`move_cursor=False`, `process_xml`, tùy chọn `process_pdf`). Không còn ghi `hoa_don.json` /
+`hoa_don_chitiet.json`; `--excel` xuất từ DB. Ghi `job_runs.command='manual'`.
+Thư mục cũ `output/xml/1201496252-U002/` và 2 file JSON là của bản cũ (đặt theo username) và có thể xóa.
+Khi chạy `fetch_pdf.py` luôn thêm `--company 1201496252`.
+
+## 2.3 File chính và thư mục output
+
+| File | Vai trò |
+|---|---|
+| `api_client.py` | Client GDT: captcha, authenticate, danh sách (file Excel `export-excel*` hoặc API JSON; sco-query cho MTT), export-xml (ZIP) |
+| `invoice_list_excel.py` | Đọc file Excel danh sách GDT xuất → dòng cùng khóa với API JSON (dò cột theo tên) |
+| `xml_parser.py` | Parse XML theo QĐ 1233 (docs/QD 1233_Quy dinh chuan DL HD CT.pdf), QR EMV, cảnh báo, `dlhdon_id` |
+| `job_policy.py` | Chính sách thử lại theo loại lỗi, ngắt mạch (circuit breaker), cửa sổ 30 ngày, `summary_only` (hthdon=2) |
+| `invoice_store.py` | Lớp PostgreSQL: hàng đợi `tasks` (FOR UPDATE SKIP LOCKED), khóa advisory, JWT cache, upsert HĐ/NCC/chi tiết, mail |
+| `db/schema.sql` | companies, gdt_sessions, partners, einvoice_providers, invoices, invoice_details, invoice_xml, invoice_pdf, tasks, task_attempts, sync_cursors, job_runs, email_messages, email_files, email_links |
+| `web/invoice_job.py` | CLI của job |
+| `web/fetch_pdf.py` | Tải PDF từ XML trên đĩa (không DB); `invoice_from_xml()` = dict HĐ chuẩn cho adapter |
+| `pdf_providers/` | 1 adapter/NCC, đăng ký trong `__init__.py`; `common.py` (HTTP, `solve_captcha`, `check_pdf_is_invoice`) |
+| `mail_reader.py` / `mail_ingest.py` | Đọc IMAP (chỉ đọc), nhận mail HĐ, bóc XML/PDF/link; khớp vào HĐ trong DB |
+| `scripts/register_invoice_tasks.ps1` | Đăng ký Task Scheduler |
+
+Thư mục output (`INVOICE_OUTPUT_DIR`, mặc định `output/`). Các thư mục `xml/`, `pdf/`, `temp/` dùng
+chung một cấu trúc:
+
+```
+output/xml/<MST công ty>/<năm>/<tháng>/<MST người bán>/{khmshdon}_{khhdon}_{shdon}.xml
+output/pdf/...             (cùng cấu trúc, .pdf)
+output/temp/...            (ZIP gốc tải từ Thuế, .zip)
+output/list/<MST công ty>/<sub_type>_<từ ngày>_<đến ngày>.xlsx   (file danh sách gốc GDT xuất)
+output/mail/unmatched/     (file từ mail chưa khớp được HĐ)
+output/logs/invoice_job_<yyyy-mm>.log
+```
+
+## 2.4 Luồng xử lý (`tick`)
+
+Code tách 2 hàm chính: `run_xml_step` (bước 2–4: GDT → XML, lệnh `xml`) và `process_pdf`
+(bước 6: site NCC → PDF, lệnh `pdf`); `run_mail_step` (bước 5, lệnh `mail`) nằm giữa. `tick` chỉ gọi lần lượt 3 phần.
+
+1. Lấy khóa advisory (không chạy chồng) → thu hồi task kẹt → HĐ `no_source` của NCC vừa có adapter quay lại hàng đợi.
+2. **Token:** dùng lại JWT trong `gdt_sessions` nếu còn hạn; chỉ đăng nhập lại (giải captcha `g_600x120`)
+   khi hết hạn hoặc gặp 401.
+3. **Danh sách (lấy nguyên danh sách trước, rồi mới tải XML):** mỗi loại HĐ 1 file Excel như nút
+   "Xuất Excel" của cổng (từ 20/10; `INVOICE_LIST_SOURCE=json` = API phân trang cũ), file gốc lưu
+   `output/list/`. GDT từ chối xuất hoặc file không đúng mẫu → khoảng đó tự lấy lại qua API JSON.
+   Luôn quét lại 30 ngày gần nhất, cộng phần còn hở theo `sync_cursors`; ngày 5 và 15 tự quét lại
+   tháng trước. HĐ đã có thì bỏ qua, HĐ mới vào hộp chờ (task `xml`). Task xong = `done`, không bao giờ
+   được lấy lại. HĐ `hthdon=2` (chỉ API JSON có trường này) thì không tạo task tải, để ở `no_source`/`summary_only`.
+   Danh sách GDT mỗi lần lấy một khác (nhiều/ít/thiếu/trùng dòng) cũng không sao: khóa (MST bán, mẫu, ký
+   hiệu, số) chỉ vào hộp 1 lần, HĐ vắng mặt ở lần sau không bị xóa. Log mỗi danh sách ghi
+   "GDT trả N HĐ → đã có X (bỏ qua), mới Y (vào hộp chờ)". Task `dead` (bỏ cuộc sau nhiều lần lỗi)
+   không tự vào lại hộp khi GDT liệt kê lại — dùng `requeue --status dead --type xml`.
+   Dữ liệu parse từ XML chỉ ghi DB, không ghi file JSON (2 file `output/hoa_don*.json` là của bản cũ 14/10).
+4. **XML:** tải ZIP → lưu `temp/` → lưu XML → ghi `invoices` / `invoice_xml` / `invoice_details`
+   / `partners` trong 1 transaction → tạo task `pdf`.
+5. **Mail** (nếu cấu hình), xem mục 2.7: XML cho HĐ Thuế không có XML, PDF đính kèm.
+   Chạy trước bước PDF để PDF đã có trong mail thì không phải gọi site NCC.
+6. **PDF:** chọn adapter theo `source_id` gắn tay (set-provider), nếu không có thì theo MSTTCGP
+   (MST chi nhánh `-001` dùng adapter công ty mẹ) → tải về → kiểm tra PDF có đúng số HĐ → ghi `invoice_pdf`.
+   `--limit` chỉ tính những HĐ thật sự gọi site NCC.
+7. **Lỗi:** task được hẹn giờ thử lại theo `RETRY_POLICY`. GDT lỗi tạm thời 5 lần liên tiếp thì dừng phần
+   GDT của lượt đó. Mỗi site NCC có circuit breaker riêng.
+
+## 2.5 Những điểm dễ sai về GDT
+
+- Mọi request phải có header `request-id` (UUID), thiếu là bị 403 "hành vi không hợp lệ".
+- Query hóa đơn mua vào phải có `ttxly` (5 = có mã, 6 = không mã, 8 = MTT). MTT dùng `/sco-query/`.
+- **`tdlap` là giờ UTC.** Luôn đổi qua `api_client.tdlap_vn()`, nếu không HĐ ngày 1 sẽ bị xếp nhầm sang tháng trước.
+- Username đăng nhập (vd `1201496252-U002`) có thể khác MST: DB tách `company_mst` và `gdt_username`.
+- **`hthdon=2`** (HĐ không mã, gửi qua bảng tổng hợp): export-xml **luôn trả 500**. Job vẫn lưu phần
+  đầu HĐ, còn XML/PDF lấy từ mail.
+- **File Excel danh sách thiếu `hthdon`** (chỉ 17–19 cột, API JSON có 150 trường). Nên HĐ không mã (`K...`)
+  lấy từ Excel được tải thử XML 1 lần: GDT trả 500 → `no_source`/`summary_only` luôn, không thử lại 10 ngày
+  (dữ liệu thật: 19/19 HĐ hthdon=2 trả 500, 30/30 HĐ không mã hthdon=0 tải được).
+- Endpoint xuất Excel (URL chép từ trình duyệt): bán ra `query/invoices/export-excel`; mua vào
+  `export-excel-sold` + `type=purchase`; MTT dùng `sco-query`; cổng gửi `ttxly==5` kèm 4 dấu cách.
+  File do Apache POI tạo ghi `<dimension ref="A1"/>` → **không đọc bằng openpyxl `read_only`** (chỉ thấy 1 dòng).
+  HĐ MTT có bố cục cột khác HĐ thường → `invoice_list_excel` dò cột theo tên.
+- Ký hiệu HĐ: ký tự đầu `C` = có mã CQT (MCCQT 34 ký tự), `K` = không mã; ký tự thứ 4 là `M` = máy tính tiền.
+
+## 2.6 Adapter PDF (`pdf_providers/`)
+
+Các adapter dưới đây đã thử thật trên XML thật (10/2026):
+
+| source_id | NCC | MSTTCGP | Mã dùng để tra | Captcha |
+|---|---|---|---|---|
+| `misa_meinvoice` | MISA | 0101243150 | TTKhac `TransactionID` | không (cần header `Accept` kiểu trình duyệt) |
+| `easyinvoice` | Softdreams | 0105987432 | `Fkey` (+ MST bán có gạch) | `g_150x34` |
+| `vnpt` | VNPT | 0100684378 | `Fkey` (VNPT để ở `<HDon><Fkey>`) / MCCQT | `g_80x30`. Mỗi khách lớn có cổng riêng (`SELLER_PORTALS`): Petrolimex (dựng PDF từ HTML), VNPT TP.HCM `vttphcm-tt78` (server có sẵn PDF + XML có chữ ký; HĐ không tồn tại → server treo, timeout 45 s → `no_pdf`); không có cổng riêng thì thử HST |
+| `ipos` | iPOS | 0104789847 | link mail `token=base64(mẫu:ký hiệu:số:MST bán)` | không. PDF + XML (XML không ký số) |
+| `viettel` | Viettel | 0100109106 | TTKhac "Mã số bí mật" + MST bán | slider, nhưng server không kiểm |
+| `hilo` | T-VAN HILO | 0106713804 | TTKhac `Fkey` (cổng Grab) | SVG → ddddocr |
+| `bkav` | BKAV | 0101360697 | `DLHDon/@Id` (InvoiceGUID) → `dlhdon_id` | không |
+| `vetc` | VETC | 0107500414, 0106858609 | TTKhac "Mã tra cứu" | không |
+| `minvoice` | M-INVOICE | 0106026495 (+ -001) | "Số bảo mật" / "Mã tra cứu" + MST bán | không |
+| `myinvoice` | My Software | 0108971656 | MCCQT | không |
+| `visnam` | Visnam | 0401486901 | `QuanLy_SoBaoMat` | `g_1500x350` |
+
+Cách thêm 1 NCC:
+1. Viết `pdf_providers/<ten>.py`, kế thừa `PdfAdapter`, khai báo `mst_tcgp`, cuối file gọi `register()`.
+2. Import module đó trong `pdf_providers/__init__.py`.
+3. Viết test offline `tests/test_pdf_<ten>.py`.
+
+Lượt `tick`/`pdf` kế tiếp tự đưa các HĐ `no_source` của NCC đó quay lại hàng đợi.
+
+Quy tắc khi viết adapter:
+- Không tìm được HĐ thì phải ném `PdfFetchError` với kind đúng (`no_pdf`, `no_code`, `no_portal`,
+  `captcha`, ...). Không bao giờ trả về bytes không phải PDF.
+- Luôn gọi `check_pdf_is_invoice` trước khi trả PDF.
+- `solve_captcha` luôn phải chỉ định nhóm model (xem 1.3).
+
+**Chưa làm được** (khi bổ sung thì cập nhật bảng trên):
+- FAST 0100727825: cổng chạy được, cần nhóm captcha mới khoảng `g_100x30` (PHẦN 1, mục 1.5).
+- VNISC 0102331762 (invoice.abcsys.vn, mã `MTCuu`, 3 HĐ thật): cổng chạy được nhưng **chưa có model
+  captcha nào đúng cho site này** — `g_180x50_vn` (từng gọi nhầm `g_180x50_vnisc`) thực ra là của
+  nền tảng vninvoice.vn, khác site (xem 1.5 mục 3/4). Cần tự tra tay xác nhận lại captcha thật của
+  invoice.abcsys.vn rồi mới thu thập mẫu train.
+- Thái Sơn 0101300842 (einvoice.vn, cổng riêng của MM Mega): luồng tra đã kiểm; `g_200x70` đã train
+  xong 17/10 (test 89,24%) nên **viết adapter được rồi**. Định tuyến theo TTKhac `DC TC`.
+- ASIA 0101162173: XML không có FKey.
+- WEBCASH/wetax 1201496252 (HĐ bán ra của chính công ty): cổng chỉ tra bằng mã riêng, mã này không có trong XML.
+- HILO GSM (cổng chung dùng reCAPTCHA, tra không ra) và VETC phí đỗ xe 0106858609 (chỉ xem
+  được trong app): cả hai nằm chờ ở `no_portal`. PDF của GSM đã lấy được qua mail.
+- CMC Telecom (cinvoice.cmctelecom.vn, mã `CTEL.<32 hex>` trong mail) và FPT eInvoice (tracuuhoadon.fpt.com.vn):
+  server **kiểm token reCAPTCHA thật** (v2 / v3) → không làm (không vượt reCAPTCHA). Nếu bỏ reCAPTCHA: CMC chỉ cần
+  `POST /v1/invoice/lookup {invoiceNo, recaptchaToken}` → `{pdfContent, xmlContent}`.
+
+**Nguyên tắc:** chỉ viết adapter cho NCC có hóa đơn thật để thử (XML từ Thuế hoặc mã trong mail). Muốn thêm NCC
+→ lấy thêm HĐ cũ (`main_auto.py --from ... --to ...`), xem `status` NCC nào nhiều HĐ nhất.
+
+**Link trong mail → adapter:** adapter khai báo `hosts` + `invoice_from_link(url, code, mail_text)` — chỉ đọc
+tham số link / mã trong mail, **không mở link**; `fetch_pdf` (và `fetch_xml` nếu có) gọi endpoint của chính adapter.
+Đã có: misa, visnam, viettel, easyinvoice (giải mã `token`), ipos, vnpt (-tt78).
+
+## 2.7 Mail hóa đơn (`mail_reader.py`, `mail_ingest.py`)
+
+- Hộp mail công ty chạy **Hanbiro tự host** (`mail.webcashvietnam.com`), IMAP SSL cổng 993, đăng nhập
+  user/password. Không có `INVOICE_MAIL_USER` thì `tick` bỏ qua bước mail. Mẫu đầy đủ: `.env.example`.
+- **Công tắc `INVOICE_MAIL_AUTH`** (chỉ đổi cách đăng nhập, phần xử lý giữ nguyên):
+  - `password` (mặc định): mail tự host; Gmail/Yahoo dùng App Password.
+  - `oauth2_microsoft`: Microsoft 365, đã tắt IMAP đăng nhập bằng mật khẩu. Cần `INVOICE_MAIL_MS_TENANT_ID/CLIENT_ID/CLIENT_SECRET`;
+    token app-only, quyền `IMAP.AccessAsApp`.
+  - `oauth2_google`: Workspace chặn App Password. Cần `INVOICE_MAIL_GOOGLE_CLIENT_ID/CLIENT_SECRET/REFRESH_TOKEN`.
+  - Thiếu biến của chế độ đã chọn → lệnh `mail` báo thiếu biến nào, còn `tick` bỏ qua bước mail.
+  - Không hỗ trợ POP3.
+- `INVOICE_MAIL_FOLDER` nhận **nhiều thư mục**, cách nhau dấu phẩy (hiện `INBOX,HDDT`: user đã tạo bộ lọc
+  chuyển mail HĐ sang `HDDT`). Tên thư mục có dấu được mã hóa modified UTF-7. Mail bị chuyển thư mục được nhận
+  ra theo Message-ID trong cùng tài khoản, nên không xử lý lại.
+- Hiện đọc hộp cá nhân `the.lai@` (mail được forward về, 7 ngày gần nhất). Sau này chuyển sang đọc thẳng
+  hộp `einvoice@` (chỉ cần đổi user/password).
+- **Chỉ đọc**: EXAMINE + BODY.PEEK (không đánh dấu đã đọc, không xóa). Mail không phải HĐ chỉ lưu
+  Message-ID, không lưu tiêu đề hay người gửi. **Không bao giờ tự mở link trong mail.**
+- Nhận ra mail HĐ **theo nội dung**: mail forward mất người gửi gốc, và không giữ `einvoice@` ở To/Cc.
+- Luồng xử lý:
+  1. XML đính kèm (kể cả trong .zip / .eml) → khớp HĐ theo (MST bán, mẫu, ký hiệu, số).
+     HĐ chưa có XML (hthdon=2) → lưu với `nguon='xml_email'`. HĐ đã có XML từ Thuế → không ghi đè.
+  2. PDF → ghép với XML cùng mail, hoặc dò MST + ký hiệu + số HĐ trong chữ của PDF
+     → lưu `invoice_pdf.source_id='email'`.
+  3. Chưa khớp được → `output/mail/unmatched/`; mỗi lượt khớp lại.
+  4. Link + mã tra cứu → bảng `email_links` → `process_links`: adapter theo host (xem 2.6) tải PDF/XML,
+     khớp HĐ như file đính kèm. Link lỗi thử lại tối đa 3 lần (`attempts`); host chưa có adapter thì để `new`.
+- Lần chạy đầu (14/10, 42 mail): 9 PDF + 2 XML hthdon=2 lấy từ mail, trong đó có PDF của những
+  NCC adapter chưa làm được (GSM, Jollibee, VNISC).
+- **Loại mail** (kiểm 20/10 trên hộp thật, quét thử chỉ đọc): XML + PDF đính kèm (cả trong .zip, mail forward
+  dạng .eml/rfc822) → xử lý được; chỉ có link + mã → được với EasyInvoice, MISA, Viettel, iPOS, VNPT -tt78,
+  còn BKAV ehoadon (link không kèm mã), CMC/FPT/HILO GSM (reCAPTCHA), VNISC abcsys (chưa có model captcha),
+  Thái Sơn (chưa viết adapter) để `new`. **Không đọc được:** .rar/.7z, ảnh chụp HĐ, Excel, file để trên
+  Google Drive/OneDrive, file > 20 MB. Zip có mật khẩu/hỏng chỉ bỏ đúng file đó (sửa 20/10, trước đây cả
+  mail báo lỗi). PDF HĐ thay thế/điều chỉnh có cả số HĐ gốc → bỏ số HĐ gốc khi khớp (sửa 20/10).
+- Hộp cá nhân `the.lai@` có nhiều mail nội bộ "[Webcash Việt Nam] BÀN GIAO DATA HÓA ĐƠN PHẦN MỀM WeTax…"
+  (ảnh + xlsx + link Google Drive): tiêu đề có "hóa đơn" nên bị tính là mail HĐ, không có gì để lấy →
+  `no_file`. Vô hại, hết khi chuyển sang hộp `einvoice@`.
+- **Cửa sổ 7 ngày:** mail không được quét trong 7 ngày kể từ lúc nhận thì bị bỏ qua luôn. Chưa có lịch chạy
+  (Task Scheduler/server) thì phải chạy `mail`/`tick` ít nhất mỗi tuần, hoặc tăng `INVOICE_MAIL_DAYS`
+  (mail đã xem chỉ đọc lại header Message-ID nên cửa sổ rộng vẫn nhẹ).
+
+## 2.8 Khảo sát cổng tra cứu (`docs/Danh_sach_NCC.xlsx`)
+
+Sheet "Chi tiết", cột M–AF (14/10/2026; user đã xóa 1 cột trống nên dịch trái 1 cột — script đọc file nên
+dò cột theo tên header): với 117 NCC có link, ghi form tra cứu mặc định cần những tham số gì (mỗi tham số
+1 cột, đánh ✓), kèm captcha chi tiết, cách tra khác, ghi chú và URL form thật. Sheet "Tổng quát" từ dòng 30:
+5 bảng tổng hợp bằng công thức COUNTIF(S) trỏ sang "Chi tiết" (tự cập nhật khi sửa ✓).
+Chỉ đọc form, không gửi tra cứu thử → captcha chỉ hiện sau khi bấm tìm có thể bị sót.
+Kết quả: 107 OK; 49 site chỉ cần mã tra cứu, 27 có captcha ảnh, 13 captcha dạng tích.
+
+## 2.9 Việc còn mở
+
+- Lấy thêm HĐ cũ (tháng 7–8) bằng `main_auto.py` để có dữ liệu thật làm adapter NCC mới.
+- Setup 1 server local chạy thử nghiệm job định kỳ.
+- Test DB (`tests/test_invoice_store.py`) chưa chạy trên DB thật.
+
+<!-- Bổ sung thêm bên dưới -->

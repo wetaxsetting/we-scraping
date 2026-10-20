@@ -1,0 +1,360 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Captcha Group Status</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #f8f7f5;
+    --surface: #ffffff;
+    --border: #e4e2dd;
+    --fg: #1a1a1a;
+    --fg2: #5c5a56;
+    --accent: #2563eb;
+    --pass: #16a34a;
+    --pass-bg: #f0fdf4;
+    --warn: #d97706;
+    --warn-bg: #fffbeb;
+    --fail: #dc2626;
+    --fail-bg: #fef2f2;
+    --train: #7c3aed;
+    --train-bg: #f5f3ff;
+    font-family: 'Be Vietnam Pro', system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111110;
+      --surface: #1c1c1a;
+      --border: #2e2e2a;
+      --fg: #e8e6e1;
+      --fg2: #9c9a94;
+      --accent: #60a5fa;
+      --pass: #4ade80;
+      --pass-bg: #052e16;
+      --warn: #fbbf24;
+      --warn-bg: #451a03;
+      --fail: #f87171;
+      --fail-bg: #450a0a;
+      --train: #a78bfa;
+      --train-bg: #1e1338;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111110;
+    --surface: #1c1c1a;
+    --border: #2e2e2a;
+    --fg: #e8e6e1;
+    --fg2: #9c9a94;
+    --accent: #60a5fa;
+    --pass: #4ade80;
+    --pass-bg: #052e16;
+    --warn: #fbbf24;
+    --warn-bg: #451a03;
+    --fail: #f87171;
+    --fail-bg: #450a0a;
+    --train: #a78bfa;
+    --train-bg: #1e1338;
+    color-scheme: dark;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    padding-inline: 16px;
+    padding-block: 0;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 2rem 0 0.25rem;
+  }
+  .subtitle {
+    color: var(--fg2);
+    font-size: 0.85rem;
+    margin-bottom: 1.5rem;
+  }
+  .stats {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+  }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 20px;
+    min-width: 0;
+    flex: 1 1 120px;
+  }
+  .stat-val {
+    font-size: 1.6rem;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .stat-label {
+    font-size: 0.75rem;
+    color: var(--fg2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-top: 2px;
+  }
+  .stat-val.c-pass { color: var(--pass); }
+  .stat-val.c-train { color: var(--train); }
+  .stat-val.c-warn { color: var(--warn); }
+  .stat-val.c-fail { color: var(--fail); }
+
+  .section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 1.75rem 0 0.75rem;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-pass { background: var(--pass); }
+  .dot-train { background: var(--train); }
+  .dot-warn { background: var(--warn); }
+  .dot-fail { background: var(--fail); }
+
+  .tbl-wrap {
+    overflow-x: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    white-space: nowrap;
+  }
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg2);
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+  }
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  .em-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+  }
+  .em-pass { background: var(--pass-bg); color: var(--pass); }
+  .em-train { background: var(--train-bg); color: var(--train); }
+  .em-warn { background: var(--warn-bg); color: var(--warn); }
+  .em-fail { background: var(--fail-bg); color: var(--fail); }
+  .company-name {
+    white-space: normal;
+    min-width: 180px;
+    max-width: 320px;
+    line-height: 1.4;
+  }
+  .group-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 500;
+  }
+  .note {
+    color: var(--fg2);
+    font-size: 0.78rem;
+    white-space: normal;
+    max-width: 260px;
+    line-height: 1.35;
+  }
+  .muted { color: var(--fg2); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .filter-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  .fbtn {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg2);
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .fbtn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+</style>
+
+<h1>Captcha OCR — Trạng thái theo nhóm & công ty</h1>
+<p class="subtitle">Cập nhật 2026-10-08 &middot; 18 groups &middot; 22 công ty</p>
+
+<div class="stats">
+  <div class="stat"><div class="stat-val c-pass">7</div><div class="stat-label">Pass (&gt;90%)</div></div>
+  <div class="stat"><div class="stat-val c-train">3</div><div class="stat-label">Đang train</div></div>
+  <div class="stat"><div class="stat-val c-warn">2</div><div class="stat-label">Chưa hội tụ</div></div>
+  <div class="stat"><div class="stat-val c-fail">6</div><div class="stat-label">Plateau 0-6%</div></div>
+</div>
+
+<div class="filter-row">
+  <button class="fbtn active" onclick="filterStatus('all')">Tất cả</button>
+  <button class="fbtn" onclick="filterStatus('pass')">Pass</button>
+  <button class="fbtn" onclick="filterStatus('train')">Đang train</button>
+  <button class="fbtn" onclick="filterStatus('warn')">Chưa hội tụ</button>
+  <button class="fbtn" onclick="filterStatus('fail')">Plateau</button>
+</div>
+
+<div id="content"></div>
+
+<script>
+const DATA = [
+  // PASS
+  { group:'g_120x38', em:100,  imgs:1000, charset:'10 số', inst:360, status:'pass',
+    companies:[{name:'Megabiz Việt Nam',mst:'0105844836',url:'https://tracuu.vinvoice.vn/Captcha/Show',em:'100%'}]},
+  { group:'g_80x30', em:98, imgs:2000, charset:'10 số', inst:720, status:'pass', companies:[]},
+  { group:'g_300x75', em:97.7, imgs:6001, charset:'10 số', inst:2400, status:'pass',
+    companies:[
+      {name:'Giấy vi tính Liên Sơn',mst:'0301452923',url:'https://tracuu.lienson.vn',em:'98%'},
+      {name:'CyberLotus',mst:'0105232093',url:'https://tracuuhoadon2.xcyber.vn',em:'98%'}
+    ]},
+  { group:'g_150x34', em:96, imgs:1000, charset:'10 số', inst:400, status:'pass',
+    companies:[
+      {name:'Softdreams (EasyInvoice)',mst:'0105987432',url:'https://tracuu.easyinvoice.vn/Captcha/Show',em:'94,90%'},
+      {name:'Technology Convergence (NETA)',mst:'0109045760',url:'https://0109045760hd.easyinvoice.vn/Search/Index',em:'96,00%'}
+    ]},
+  { group:'g_1500x350', em:96, imgs:1000, charset:'10 số', inst:320, status:'pass',
+    companies:[{name:'Visnam (vin-hoadon)',mst:'0401486901',url:'https://tracuu.vin-hoadon.com',em:'96%'}]},
+  { group:'g_180x50', em:93.1, imgs:2960, charset:'36 ch', inst:296, status:'pass',
+    companies:[{name:'VNInvoice',mst:'0101352495',url:'https://tracuu.v50.vninvoice.vn/',em:'93,10%'}]},
+  { group:'g_194x35', em:91.8, imgs:1000, charset:'10 số', inst:440, status:'pass',
+    companies:[{name:'PVOIL',mst:'0305795054',url:'https://hoadon.pvoil.vn/Captcha/Show',em:'91,80%'}]},
+
+  // ĐANG TRAIN
+  { group:'g_120x40', em:84, imgs:6000, charset:'30 ch', inst:null, status:'train', note:'2 style gộp, cần --epochs 120',
+    companies:[
+      {name:'VNPT Invoice',mst:'0100684378',url:'https://gateway-hst.vnpt-invoice.com.vn',em:'0%'},
+      {name:'Nhóm Mây (CloudTeam)',mst:'0312617990',url:'https://chanel-eportal.cloudteam.vn/',em:'87,41%'}
+    ]},
+  { group:'g_180x64', em:73, imgs:7236, charset:'36 ch', inst:null, status:'train', note:'Cần --epochs 120', companies:[]},
+  { group:'g_160x60', em:52, imgs:null, charset:'20 ch', inst:null, status:'train', note:'Đang học, chưa hội tụ',
+    companies:[{name:'WEBCASH Việt Nam',mst:'1201496252',url:'https://wetax.com.vn/tra-cuu',em:'0%'}]},
+
+  // CHƯA HỘI TỤ
+  { group:'g_70x23', em:24, imgs:null, charset:'25 ch', inst:198, status:'warn', note:'Thiếu data, dưới 250 inst/cls',
+    companies:[{name:'Bitware',mst:'0103770970',url:'https://www.bitware.vn/tracuuhoadon/',em:'0%'}]},
+  { group:'g_250x40', em:16, imgs:null, charset:'36 ch', inst:166, status:'warn', note:'Thiếu data + charset lớn + label dài 5-10',
+    companies:[{name:'VDSG Invoice',mst:'0314058603',url:'https://www.vdsg-invoice.vn/Account/Login',em:'18,18%'}]},
+
+  // PLATEAU
+  { group:'g_200x80', em:6, imgs:null, charset:'31 ch', inst:168, status:'fail', note:'Thiếu data',
+    companies:[{name:'Ngô Gia Phát',mst:'0311942758',url:'https://tracuuonline.ngogiaphat.vn/Search.aspx',em:'0%'}]},
+  { group:'g_150x39', em:2, imgs:null, charset:'36 ch', inst:265, status:'fail', note:'Gần ngưỡng, có thể nhãn bẩn (2 style gộp)',
+    companies:[{name:'SmartSign (VI NA)',mst:'0309612872',url:'https://tracuuhd.smartsign.com.vn/',em:'84,85%'}]},
+  { group:'g_150x30', em:0, imgs:null, charset:'26 ch', inst:164, status:'fail', note:'Thiếu data nghiêm trọng',
+    companies:[{name:'ASIA Software',mst:'0101162173',url:'https://asiainvoice.vn/tra-cuu/GetCaptcha',em:'0%'}]},
+  { group:'g_200x70', em:0, imgs:null, charset:'24 ch', inst:95, status:'fail', note:'Thiếu data, label len 1-5 lộn xộn',
+    companies:[{name:'Thái Sơn (einvoice)',mst:'0101300842',url:'https://tracuutvan.einvoice.com.vn/',em:'0%'}]},
+  { group:'g_160x75', em:0, imgs:null, charset:'36 ch', inst:243, status:'fail', note:'Sát ngưỡng, charset mới đổi',
+    companies:[{name:'PA Việt Nam (hoadon30s)',mst:'0302431595',url:'https://tracuu.hoadon30s.vn/',em:'74%'}]},
+  { group:'g_600x120', em:0, imgs:null, charset:'29 ch', inst:437, status:'fail', note:'Inst/cls đủ nhưng config có vấn đề',
+    companies:[
+      {name:'Đông Nam Á (Tax24)',mst:'0102454468',url:'https://tax24.com.vn/einvoice/servlet/ImageServlet',em:'0%'},
+      {name:'Tổng cục Thuế',mst:'',url:'https://hoadondientu.gdt.gov.vn/',em:'81%'}
+    ]},
+];
+
+const STATUS_META = {
+  pass:  { label:'Pass (>90% EM)', dot:'dot-pass',  badge:'em-pass' },
+  train: { label:'Đang train thêm', dot:'dot-train', badge:'em-train' },
+  warn:  { label:'Chưa hội tụ — thiếu data', dot:'dot-warn',  badge:'em-warn' },
+  fail:  { label:'Plateau 0-6% — cần gen thêm data', dot:'dot-fail',  badge:'em-fail' },
+};
+
+let currentFilter = 'all';
+
+function filterStatus(s) {
+  currentFilter = s;
+  document.querySelectorAll('.fbtn').forEach(b => {
+    b.classList.toggle('active', b.textContent.trim() === ({all:'Tất cả',pass:'Pass',train:'Đang train',warn:'Chưa hội tụ',fail:'Plateau'})[s]);
+  });
+  render();
+}
+
+function render() {
+  const groups = currentFilter === 'all' ? DATA : DATA.filter(d => d.status === currentFilter);
+  const byStatus = {};
+  groups.forEach(g => {
+    if (!byStatus[g.status]) byStatus[g.status] = [];
+    byStatus[g.status].push(g);
+  });
+
+  let html = '';
+  for (const status of ['pass','train','warn','fail']) {
+    const items = byStatus[status];
+    if (!items) continue;
+    const meta = STATUS_META[status];
+
+    html += `<div class="section-title"><span class="dot ${meta.dot}"></span>${meta.label} — ${items.length} group</div>`;
+    html += `<div class="tbl-wrap"><table>
+      <tr><th>Group</th><th>EM</th><th>Công ty</th><th>MST</th><th>EM thực tế</th><th>Ghi chú</th></tr>`;
+
+    for (const g of items) {
+      const rows = Math.max(1, g.companies.length);
+      for (let r = 0; r < rows; r++) {
+        const c = g.companies[r];
+        html += '<tr>';
+        if (r === 0) {
+          html += `<td rowspan="${rows}" class="group-tag">${g.group}<br><span class="muted" style="font-size:0.72rem">${g.charset}${g.inst ? ', '+g.inst+' i/c' : ''}</span></td>`;
+          html += `<td rowspan="${rows}"><span class="em-badge ${meta.badge}">${g.em}%</span></td>`;
+        }
+        if (c) {
+          html += `<td class="company-name">${c.name}</td>`;
+          html += `<td class="muted">${c.mst || '—'}</td>`;
+          html += `<td><span class="em-badge ${parseFloat(c.em)>=90?'em-pass':parseFloat(c.em)>=50?'em-train':'em-fail'}">${c.em}</span></td>`;
+        } else {
+          html += '<td class="muted">—</td><td>—</td><td>—</td>';
+        }
+        if (r === 0) {
+          html += `<td rowspan="${rows}" class="note">${g.note || '—'}</td>`;
+        }
+        html += '</tr>';
+      }
+    }
+    html += '</table></div>';
+  }
+  document.getElementById('content').innerHTML = html;
+}
+
+render();
+</script>
+
+</body></html>

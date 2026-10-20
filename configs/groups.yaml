@@ -1,0 +1,335 @@
+data_dir: env
+preproc:
+  height: 32
+  in_channels: 1
+  polarity_normalize: true
+  border_px: 2
+  clip_above: null
+  stretch_lo: 2.0
+  stretch_hi: 98.0
+  clahe: false
+  clahe_clip: 2.0
+  clahe_grid: 4
+aug:
+  enabled: true
+  rotate_deg: 3.0
+  shear: 0.05
+  scale_lo: 0.95
+  scale_hi: 1.05
+  translate: 0.02
+  width_stretch: 0.05
+  bright_lo: 0.8
+  bright_hi: 1.2
+  noise_sigma: 0.05
+  blur_p: 0.15
+  line_p: 0.15
+  cutout_p: 0.2
+  cutout_max_w: 8
+  cutout_max_h: 12
+train:
+  epochs: 60
+  batch_size: 64
+  lr: 0.001
+  weight_decay: 0.0001
+  grad_clip: 5.0
+  patience: 20
+  min_delta: 0.001
+  lr_factor: 0.5
+  lr_patience: 10
+  min_lr: 1.0e-05
+  dropout: 0.1
+  hidden: 256
+  rnn_layers: 2
+  val_frac: 0.1
+  test_frac: 0.1
+  seed: 1337
+  num_workers: 4
+  limit: 0
+  max_steps: 0
+groups:
+- group_id: g_180x64
+  sizes:
+  - - 180
+    - 64
+  charset: 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 90
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (180, 64) n=7236 len 5-5 drop 0.4% ring_raw 255
+- group_id: g_120x40_vnpt
+  sizes:
+  - - 120
+    - 40
+  charset: 2345678abcdefghkmnprwxy
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 96
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (120, 40) VNPT style, grey bg, italic, len=4, n=12056
+- group_id: g_120x40_cloud
+  sizes:
+  - - 120
+    - 40
+  charset: 2346789abcdefghjmnpqrtuvxyz
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 96
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (120, 40) CloudTeam style, lowercased labels, len=5, n=6846
+- group_id: g_80x30
+  sizes:
+  - - 80
+    - 30
+  charset: 0123456789
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 85
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (80, 30) n=2000 len 4-5 drop 2.4% ring_raw 212
+- group_id: g_300x75
+  sizes:
+  - - 300
+    - 75
+  charset: 0123456789
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 128
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (300, 75) n=2000 len 5-5 drop 0.6% ring_raw 226
+- group_id: g_160x75
+  sizes:
+  - - 160
+    - 75
+  charset: 0123456789abcdefghijklmnopqrstuvwxyz
+  charset_mode: fixed
+  min_freq: 0.005
+  review: false
+  width: 68
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (160, 75) n=1995 len 5-6 drop 0.3% ring_raw 233
+- group_id: g_600x120
+  sizes:
+  - - 600
+    - 120
+  charset: 23456789ABCDEFGHJKMNPQRSTVWXYZ
+  charset_mode: core
+  min_freq: 0.005
+  review: true
+  width: 160
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: 85
+  note: (600, 120) n=1784 len 6-7 drop 15.2% ring_raw 0
+- group_id: g_120x38
+  sizes:
+  - - 120
+    - 38
+  charset: 0123456789
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 101
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (120, 38) n=1000 len 4-5 drop 0.5% ring_raw 142
+- group_id: g_150x34
+  sizes:
+  - - 150
+    - 34
+  charset: 0123456789
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 141
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (150, 34) n=1000 len 4-6 drop 1.9% ring_raw 86
+- group_id: g_194x35
+  sizes:
+  - - 194
+    - 35
+  charset: 0123456789
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 177
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (194, 35) n=1000 len 4-7 drop 6.7% ring_raw 86
+- group_id: g_150x30
+  sizes:
+  - - 150
+    - 30
+  charset: ABCDEFGHIJKLMNOPQRSTUVWXYZ
+  charset_mode: core
+  min_freq: 0.005
+  review: true
+  width: 160
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (150, 30) n=1000 len 5-6 drop 10.8% ring_raw 255
+- group_id: g_1500x350
+  sizes:
+  - - 1500
+    - 350
+  charset: 0123456789
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 137
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (1500, 350) n=1000 len 4-4 drop 5.2% ring_raw 255
+- group_id: g_250x40
+  sizes:
+  - - 250
+    - 40
+  charset: 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ
+  charset_mode: fixed
+  min_freq: 0.005
+  review: true
+  width: 200
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (250, 40) n=1000 len 5-10 drop 17.4% ring_raw 219
+- group_id: g_150x39
+  sizes:
+  - - 150
+    - 39
+  charset: 0123456789abcdefghijklmnopqrstuvwxyz
+  charset_mode: fixed
+  min_freq: 0.005
+  review: false
+  width: 123
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (150, 39) n=995 len 3-4 drop 3.8% ring_raw 240
+- group_id: g_180x50_vn
+  sizes:
+  - - 180
+    - 50
+  charset: 023456789ABCDEFGHIJKLMNPQRSTUVWXYZabcdefghijklmnpqrstuvwxyz
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 115
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (180, 50) mixed case, red text dotted bg, len=5-6, n=1927, charset=60 (core sẽ drop
+    tail _/I/0/W/l) — nền tảng vninvoice.vn (tracuu.v50.vninvoice.vn; VN-Invoice MST 0101352495
+    / "VNISC" dòng 46 Excel MST 0103018807), KHÔNG phải invoice.abcsys.vn/MSTTCGP 0102331762
+    (nhầm trước đây); renamed g_180x50_mixed → g_180x50_vnisc 15/10 → g_180x50_vn 20/10
+- group_id: g_180x50_tax24
+  sizes:
+  - - 180
+    - 50
+  charset: 02345678abcdefghkmnopqrwxy
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 115
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (180, 50) mostly lowercase, len=5-6, n=1000, charset=31 (core sẽ drop tail C/K/Z/q/_)
+    — TAX24/VN-Invoice; renamed from g_180x50_lower 15/10
+- group_id: g_160x60
+  sizes:
+  - - 160
+    - 60
+  charset: 2345678abcdefgmnpwxy
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 85
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (160, 60) n=1970 len 4-4 drop 8.5% ring_raw 194 [tu env/g_160x60]
+- group_id: g_200x70
+  sizes:
+  - - 200
+    - 70
+  charset: ABCDEFGHIJKLMNOPQRSTUVWYZ
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 137
+  height: 48
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: '(200, 70) n=11311. height 32->48 (W 91->137, T 22->34) ngay 20/10 de sua loi
+    CTC nuot ky tu lap (LWWD->LWD) - nhan co ky tu lap sai 32.9% vs 10.8% chung. Ban
+    height=32 dat test 89.24% luu o runs/g_200x70/h32_89pct/'
+- group_id: g_200x80
+  sizes:
+  - - 200
+    - 80
+  charset: 23456789abcdefghijklmnopqrstuvxyz
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 80
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (200, 80) n=1387 len 5-5 drop 2.4% ring_raw 0 [tu env/g_200x80]
+- group_id: g_70x23
+  sizes:
+  - - 70
+    - 23
+  charset: ABCDEFGHJKLMNOPQRSTUVWXYZ
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 97
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: (70, 23) n=1539 len 4-4 drop 4.5% ring_raw 255 [tu env/g_70x23]

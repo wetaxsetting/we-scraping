@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Captcha Predictor</title>
+<style>
+:root {
+  --bg: #0f172a; --surface: #1e293b; --border: #334155;
+  --text: #e2e8f0; --muted: #94a3b8; --accent: #3b82f6;
+  --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 40px 16px; }
+h1 { font-size: 1.6rem; margin-bottom: 24px; }
+
+.container { width: 100%; max-width: 500px; }
+
+.tabs { display: flex; gap: 0; margin-bottom: 20px; }
+.tab {
+  flex: 1; padding: 10px; text-align: center; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--muted); font-size: 14px; transition: all 0.2s;
+}
+.tab:first-child { border-radius: 8px 0 0 8px; }
+.tab:last-child { border-radius: 0 8px 8px 0; }
+.tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.panel { display: none; }
+.panel.active { display: block; }
+
+.drop-zone {
+  border: 2px dashed var(--border); border-radius: 12px; padding: 40px 20px;
+  text-align: center; cursor: pointer; transition: border-color 0.2s;
+  color: var(--muted); font-size: 14px;
+}
+.drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); color: var(--text); }
+.drop-zone input { display: none; }
+
+.url-row { display: flex; gap: 8px; }
+.url-row input {
+  flex: 1; padding: 12px 14px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font-size: 14px;
+}
+.url-row input::placeholder { color: var(--muted); }
+.btn {
+  padding: 12px 24px; border-radius: 8px; border: none;
+  background: var(--accent); color: #fff; font-size: 14px; cursor: pointer;
+  white-space: nowrap;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+#status { text-align: center; color: var(--muted); font-size: 14px; margin-top: 16px; min-height: 20px; }
+
+.result {
+  display: none; margin-top: 24px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 12px; padding: 20px;
+}
+.result.show { display: block; }
+
+.result img {
+  width: 100%; max-width: 400px; height: auto; border-radius: 8px;
+  background: #fff; image-rendering: pixelated; display: block; margin: 0 auto 16px;
+}
+.result-text { font-size: 48px; font-weight: 800; text-align: center; letter-spacing: 8px; margin-bottom: 8px; }
+.result-meta { text-align: center; color: var(--muted); font-size: 13px; }
+.result-meta .group { color: var(--accent); }
+.result-meta .conf { margin-left: 12px; }
+.conf-high { color: var(--green); }
+.conf-mid { color: var(--yellow); }
+.conf-low { color: var(--red); }
+
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 600; margin-left: 8px;
+}
+.badge.fallback { background: #854d0e; color: #fef08a; }
+.badge.low { background: #991b1b; color: #fecaca; }
+.badge.error { background: #7f1d1d; color: #fca5a5; }
+.badge.source { background: #1e3a8a; color: #bfdbfe; }
+.badge.ocr { background: #854d0e; color: #fef08a; }
+
+/* OCR fallback box */
+.ocr-box {
+  margin-top: 12px; padding: 10px 14px;
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.ocr-box .ocr-label {
+  color: var(--yellow); font-weight: 600; margin-bottom: 4px;
+}
+.ocr-box .ocr-text {
+  font: 600 22px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 4px; color: var(--text);
+}
+.ocr-box .ocr-agree { font-size: 11px; margin-top: 4px; }
+.ocr-box .ocr-agree.match { color: var(--green); }
+.ocr-box .ocr-agree.mismatch { color: var(--red); }
+
+.history { margin-top: 24px; }
+.history h3 { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.history-list { display: flex; flex-direction: column; gap: 6px; }
+.history-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  font-size: 13px;
+}
+.history-item img { width: 60px; height: auto; border-radius: 4px; background: #fff; image-rendering: pixelated; }
+.history-item .h-pred { font-weight: 700; font-size: 16px; letter-spacing: 2px; }
+.history-item .h-meta { color: var(--muted); font-size: 11px; }
+
+/* Site quick-pick grid */
+.sites-block { margin-top: 16px; }
+.sites-label { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.sites-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.site-chip {
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); cursor: pointer;
+  font-size: 11px; text-align: left; transition: all 0.15s;
+  /* white-space: nowrap; overflow: hidden; text-overflow: ellipsis; */
+  white-space: normal;
+  line-height: 1.3;
+  min-height: 40px;
+  padding: 8px 10px;
+}
+.site-chip:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.site-chip:active { transform: scale(0.98); }
+.site-chip.fetching { background: #854d0e; color: #fef08a; cursor: wait; }
+
+/* Nhóm sources theo status */
+.source-group { margin-bottom: 16px; }
+.source-group-title {
+  font-size: 12px; font-weight: 600; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+.source-group-title.trained { color: var(--green); }
+.source-group-title.partial { color: var(--yellow); }
+.source-group-title.untrained { color: var(--muted); }
+.source-group-title .count {
+  font-weight: 400; color: var(--muted); font-size: 11px;
+}
+
+/* Chip có badge status */
+.site-chip {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 6px;
+}
+.site-chip .chip-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; text-align: left;
+}
+.site-chip .chip-badge {
+  font-size: 9px; padding: 1px 5px; border-radius: 3px;
+  font-weight: 700; flex-shrink: 0;
+}
+.site-chip .chip-badge.trained { background: rgba(34,197,94,.2); color: #86efac; }
+.site-chip .chip-badge.partial { background: rgba(234,179,8,.2); color: #fde047; }
+.site-chip .chip-badge.untrained { background: rgba(100,116,139,.3); color: #cbd5e1; }
+
+.site-chip.trained { border-left: 3px solid var(--green); }
+.site-chip.partial { border-left: 3px solid var(--yellow); }
+.site-chip.untrained { border-left: 3px solid #475569; }
+</style>
+</head>
+<body>
+
+<h1>Captcha Predictor</h1>
+
+<div class="container">
+  <div class="tabs">
+    <div class="tab active" data-tab="upload">Upload ảnh</div>
+    <div class="tab" data-tab="url">Paste URL</div>
+  </div>
+
+  <!-- Tab 1: Upload -->
+  <div class="panel active" id="panel-upload">
+    <div class="drop-zone" id="drop-zone">
+      <div>Kéo thả ảnh vào đây hoặc click để chọn file</div>
+      <input type="file" id="file-input" accept="image/*" />
+    </div>
+  </div>
+
+  <!-- Tab 2: Paste URL + 21 site chips -->
+  <div class="panel" id="panel-url">
+    <div class="url-row">
+      <input type="text" id="url-input" placeholder="Paste URL ảnh captcha..." />
+      <button class="btn" onclick="predictURL()">Predict</button>
+    </div>
+
+    <div class="sites-block">
+  <div class="sites-label">Hoặc click vào site để fetch ngay:</div>
+
+  <!-- ✅ PASS -->
+  {% if sources_by_status.pass %}
+  <div class="source-group">
+    <div class="source-group-title trained">
+      ✅ PASS &gt; 90% EM <span class="count">({{ sources_by_status.pass|length }} site)</span>
+    </div>
+    <div class="sites-grid">
+      {% for s in sources_by_status.pass %}
+      <button class="site-chip trained" data-sid="{{ s.id }}"
+              title="{{ s.group }} · {{ s.images }} ảnh · {{ s.charset }}"
+              onclick="fetchSite(this, '{{ s.id }}')">
+        <span class="chip-name">{{ s.name }}</span>
+        <span class="chip-badge trained">{{ s.accuracy|round(1) }}%</span>
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ⚠️ CẦN TRAIN THÊM -->
+  {% if sources_by_status.needs_more %}
+  <div class="source-group">
+    <div class="source-group-title partial">
+      ⚠️ Cần train thêm 50-89% <span class="count">({{ sources_by_status.needs_more|length }} site)</span>
+    </div>
+    <div class="sites-grid">
+      {% for s in sources_by_status.needs_more %}
+      <button class="site-chip partial" data-sid="{{ s.id }}"
+              title="{{ s.group }} · {{ s.note }}"
+              onclick="fetchSite(this, '{{ s.id }}')">
+        <span class="chip-name">{{ s.name }}</span>
+        <span class="chip-badge partial">{{ s.accuracy|round(1) }}%</span>
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- 🔄 CHƯA HỘI TỤ -->
+  {% if sources_by_status.not_converged %}
+  <div class="source-group">
+    <div class="source-group-title partial" style="color:#f97316">
+      🔄 Chưa hội tụ 10-49% <span class="count">({{ sources_by_status.not_converged|length }} site)</span>
+    </div>
+    <div class="sites-grid">
+      {% for s in sources_by_status.not_converged %}
+      <button class="site-chip partial" data-sid="{{ s.id }}"
+              style="border-left-color:#f97316"
+              title="{{ s.group }} · {{ s.note }}"
+              onclick="fetchSite(this, '{{ s.id }}')">
+        <span class="chip-name">{{ s.name }}</span>
+        <span class="chip-badge partial" style="background:rgba(249,115,22,.2);color:#fdba74">
+          {{ s.accuracy|round(1) }}%
+        </span>
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ⛔ PLATEAU -->
+  {% if sources_by_status.plateau %}
+  <div class="source-group">
+    <div class="source-group-title untrained" style="color:#dc2626">
+      ⛔ PLATEAU 0-9% EM <span class="count">({{ sources_by_status.plateau|length }} site)</span>
+    </div>
+    <div class="sites-grid">
+      {% for s in sources_by_status.plateau %}
+      <button class="site-chip untrained" data-sid="{{ s.id }}"
+              style="border-left-color:#dc2626"
+              title="{{ s.group }} · {{ s.note }}"
+              onclick="fetchSite(this, '{{ s.id }}')">
+        <span class="chip-name">{{ s.name }}</span>
+        <span class="chip-badge untrained" style="background:rgba(220,38,38,.25);color:#fca5a5">
+          {{ s.accuracy|round(1) }}%
+        </span>
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ❓ UNKNOWN -->
+  {% if sources_by_status.unknown %}
+  <div class="source-group">
+    <div class="source-group-title untrained">
+      ❓ Chưa có số liệu <span class="count">({{ sources_by_status.unknown|length }} site)</span>
+    </div>
+    <div class="sites-grid">
+      {% for s in sources_by_status.unknown %}
+      <button class="site-chip untrained" data-sid="{{ s.id }}"
+              onclick="fetchSite(this, '{{ s.id }}')">
+        <span class="chip-name">{{ s.name }}</span>
+        <span class="chip-badge untrained">?</span>
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+  </div>
+
+  <div id="status"></div>
+
+  <!-- Result panel -->
+  <div class="result" id="result">
+    <img id="result-img" />
+    <div class="result-text" id="result-pred"></div>
+    <div class="result-meta" id="result-meta"></div>
+    <!-- OCR fallback box -->
+    <div class="ocr-box" id="ocr-box" style="display:none;"></div>
+  </div>
+
+  <div class="history" id="history" style="display:none">
+    <h3>Lịch sử</h3>
+    <div class="history-list" id="history-list"></div>
+  </div>
+</div>
+
+<script>
+const history = [];
+
+// ---------- Tab switching ----------
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// ---------- Upload ----------
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) predictFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) predictFile(fileInput.files[0]); });
+
+document.getElementById('url-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') predictURL();
+});
+
+// ---------- Predict from file ----------
+async function predictFile(file) {
+  const status = document.getElementById('status');
+  status.textContent = 'Đang predict...';
+  document.getElementById('result').classList.remove('show');
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const resp = await fetch('/api/predict', { method: 'POST', body: form });
+    const data = await resp.json();
+    if (data.error && !data.pred) { status.textContent = 'Lỗi: ' + data.error; return; }
+    showResult(data, URL.createObjectURL(file));
+    status.textContent = '';
+  } catch (e) {
+    status.textContent = 'Lỗi: ' + e.message;
+  }
+}
+
+// ---------- Predict from URL ----------
+async function predictURL() {
+  const url = document.getElementById('url-input').value.trim();
+  if (!url) return;
+
+  const status = document.getElementById('status');
+  status.textContent = 'Đang tải và predict...';
+  document.getElementById('result').classList.remove('show');
+
+  const form = new FormData();
+  form.append('url', url);
+
+  try {
+    const resp = await fetch('/api/predict', { method: 'POST', body: form });
+    const data = await resp.json();
+    if (data.error && !data.pred) { status.textContent = 'Lỗi: ' + data.error; return; }
+    const imgUrl = '/api/image?path=' + encodeURIComponent(data.saved_path);
+    showResult(data, imgUrl);
+    status.textContent = '';
+  } catch (e) {
+    status.textContent = 'Lỗi: ' + e.message;
+  }
+}
+
+// ---------- Fetch from source chip ----------
+async function fetchSite(btn, sid) {
+  const status = document.getElementById('status');
+  const oldText = btn.textContent;
+
+  btn.classList.add('fetching');
+  btn.textContent = '...';
+  btn.disabled = true;
+  status.textContent = 'Đang fetch từ ' + sid + '...';
+  document.getElementById('result').classList.remove('show');
+
+  try {
+    const resp = await fetch(`/api/fetch/${sid}`, { method: 'POST' });
+    const data = await resp.json();
+
+    if (data.error && !data.pred) {
+      status.textContent = '❌ ' + (data.error || 'fetch failed');
+      return;
+    }
+
+    // Điền URL nếu có
+    if (data.extra && data.extra.url) {
+      document.getElementById('url-input').value = data.extra.url;
+    } else {
+      document.getElementById('url-input').value = '[source] ' + sid;
+    }
+
+    const imgUrl = '/api/image?path=' + encodeURIComponent(data.saved_path);
+    showResult(data, imgUrl);
+    status.textContent = '✅ ' + sid + ' — OK';
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+  } finally {
+    btn.classList.remove('fetching');
+    btn.textContent = oldText;
+    btn.disabled = false;
+  }
+}
+
+// ---------- Render result ----------
+function showResult(data, imgSrc) {
+  document.getElementById('result-img').src = imgSrc;
+  document.getElementById('result-pred').textContent = data.error ? '—' : data.pred;
+
+  let confClass = 'conf-high';
+  if (data.confidence < 0.6) confClass = 'conf-low';
+  else if (data.confidence < 0.9) confClass = 'conf-mid';
+
+  let badges = '';
+  if (data.source) badges += `<span class="badge source">${data.source}</span>`;
+  if (data.error) badges += '<span class="badge error">ERROR</span>';
+  if (data.fallback) badges += '<span class="badge fallback">FALLBACK</span>';
+  if (data.low_confidence && !data.error) badges += '<span class="badge low">LOW CONF</span>';
+  if (data.used_ocr) badges += '<span class="badge ocr">OCR</span>';
+
+  document.getElementById('result-meta').innerHTML = `
+    <span class="group">${data.group || '?'}</span>
+    <span class="conf ${confClass}">${(data.confidence * 100).toFixed(1)}%</span>
+    <span style="color:var(--muted);margin-left:8px">${data.size ? data.size[0] + '×' + data.size[1] : ''}</span>
+    ${badges}
+    ${data.error ? '<div style="color:var(--red);margin-top:4px;font-size:12px">' + data.error + '</div>' : ''}
+  `;
+
+  // OCR fallback box
+  const ocrBox = document.getElementById('ocr-box');
+  if (data.used_ocr) {
+    let agreeHtml = '';
+    if (data.ocr_text === null || data.ocr_text === undefined) {
+      agreeHtml = '<div class="ocr-agree mismatch">⚠️ OCR không đọc được</div>';
+    } else if (data.ocr_agree === true) {
+      agreeHtml = '<div class="ocr-agree match">✅ Cả 2 model đều đồng ý</div>';
+    } else if (data.ocr_agree === false) {
+      agreeHtml = '<div class="ocr-agree mismatch">⚠️ Model và OCR khác nhau — cần kiểm tra</div>';
+    }
+    ocrBox.innerHTML = `
+      <div class="ocr-label">🔍 OCR fallback (model confidence &lt; 80%)</div>
+      <div class="ocr-text">${data.ocr_text || '(rỗng)'}</div>
+      ${agreeHtml}
+    `;
+    ocrBox.style.display = 'block';
+  } else {
+    ocrBox.style.display = 'none';
+  }
+
+  document.getElementById('result').classList.add('show');
+
+  history.unshift({
+    pred: data.pred,
+    conf: data.confidence,
+    group: data.group,
+    imgSrc,
+    error: data.error,
+    source: data.source,
+    ocr_text: data.ocr_text,
+    used_ocr: data.used_ocr,
+  });
+  if (history.length > 20) history.pop();
+  renderHistory();
+}
+
+function renderHistory() {
+  if (history.length < 2) { document.getElementById('history').style.display = 'none'; return; }
+  document.getElementById('history').style.display = 'block';
+  document.getElementById('history-list').innerHTML = history.slice(1).map(h => `
+    <div class="history-item">
+      <img src="${h.imgSrc}" />
+      <div>
+        <div class="h-pred">${h.error ? '—' : h.pred}${h.used_ocr ? ' <span style="font-size:10px;color:var(--yellow)">OCR</span>' : ''}</div>
+        <div class="h-meta">${h.source ? h.source + ' · ' : ''}${h.group || '?'} · ${(h.conf * 100).toFixed(1)}%${h.ocr_text ? ' · ocr=' + h.ocr_text : ''}</div>
+      </div>
+    </div>
+  `).join('');
+}
+</script>
+</body>
+</html>

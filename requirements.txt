@@ -1,0 +1,15 @@
+# Required dependencies for training and inference.
+# NOTE: no CUDA wheel is pinned on purpose — this dev machine runs torch 2.14.0+cpu,
+# and pinning "+cu121" here would break it. For Colab/GPU install torch separately, e.g.
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+torch>=2.2,<3
+numpy>=1.24
+Pillow>=10
+opencv-python>=4.8
+pandas>=2.0
+onnxruntime>=1.17
+# Needed by the exporter itself, not just for inspecting graphs: torch.onnx.export
+# fails outright without it, and ONNX export is a first-class feature here.
+onnx>=1.16
+flask>=3.0
+PyYAML>=6.0

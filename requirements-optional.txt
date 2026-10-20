@@ -1,0 +1,7 @@
+# Optional extras. Nothing here is needed for training or inference to work.
+matplotlib>=3.8   # loss/accuracy curves (captcha.plotting)
+tqdm>=4.66        # progress bars
+# Only needed if torch's *new* dynamo ONNX exporter is used instead of the default
+# legacy one (export_onnx.py passes dynamo=False and does not require this).
+onnxscript>=0.1
+onnxsim>=0.4      # optional graph simplification

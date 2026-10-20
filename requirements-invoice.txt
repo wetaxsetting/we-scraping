@@ -1,0 +1,11 @@
+# Job lấy hóa đơn GDT (web/invoice_job.py) — cài thêm trên nền requirements.txt:
+#   pip install -r requirements.txt -r requirements-invoice.txt
+#   playwright install chromium        # bắt buộc cho adapter VNPT (dựng PDF từ HTML)
+requests>=2.31
+psycopg2-binary>=2.9      # PostgreSQL (hộp chờ, dữ liệu hóa đơn)
+python-dotenv>=1.0        # đọc .env
+openpyxl>=3.1             # đọc file Excel danh sách HĐ do GDT xuất (bước lấy danh sách)
+PyMuPDF>=1.24             # kiểm tra PDF tải về có đúng số hóa đơn
+playwright>=1.40          # VNPT: cổng tra cứu không có PDF trên server
+skia-python>=87           # GDT: captcha dạng SVG → PNG
+ddddocr>=1.4              # HILO/Grab: captcha SVG không khớp nhóm model nào của ta

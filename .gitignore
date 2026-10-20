@@ -1,0 +1,49 @@
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+
+# Training artefacts -- large, reproducible from the dataset + config
+runs/
+weights/
+*.pt
+*.onnx
+
+# Dataset index cache (rebuilt automatically; keyed by dir signature)
+.cache/
+
+# Report / scratch output
+out/
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Tooling
+.pytest_cache/
+.ipynb_checkpoints/
+.claude/
+
+# Bí mật — chỉ nằm trong .env, KHÔNG đưa lên repo
+.env
+.env.*
+!.env.example
+
+# Dữ liệu train captcha (lớn) + nhật ký đổi nhãn của dataset
+env_pass/
+env_*manifest.json
+fix_case_*_manifest.json
+
+# Dữ liệu hóa đơn thật của công ty (XML/PDF/mail/log) và file tạm
+output/
+temp/
+docs/*.backup-*.xlsx
+~$*
+
+# Repo tham khảo riêng (có .git riêng) và project mẫu không liên quan
+example/
+Sample/
+
+# Build C# (captcha-botdetect)
+bin/
+obj/
