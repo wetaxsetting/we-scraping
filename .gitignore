@@ -60,3 +60,12 @@ runs/*
 runs/*/*
 !runs/*/best.pt
 !runs/*/history.csv
+# g_200x70: bản height=32 test 89,24% (config đã đổi sang height=48 để train lại 20/10).
+# best.pt ngoài cùng là lượt train h48 đang dở → chưa đưa lên.
+!runs/g_200x70/
+!runs/g_200x70/h32_89pct/
+runs/g_200x70/h32_89pct/*
+!runs/g_200x70/h32_89pct/best.pt
+!runs/g_200x70/h32_89pct/history.csv
+runs/g_200x70/best.pt
+runs/g_200x70/history.csv
