@@ -24,6 +24,10 @@ import job_policy
 
 # Khóa advisory toàn cục: chỉ 1 lượt chạy job tại 1 thời điểm.
 _JOB_LOCK_KEY = 7311002
+# sync-lists không chạy chồng chính nó, nhưng không chặn tick/worker.
+SYNC_LOCK_KEY = 7311003
+# Khóa đăng nhập theo công ty (dạng 2 khóa: lớp này + hashtext(MST)).
+_LOGIN_LOCK_CLASS = 7311004
 
 _SCHEMA_SQL = Path(__file__).resolve().parent / "db" / "schema.sql"
 
@@ -58,15 +62,35 @@ class InvoiceStore:
         with self._tx() as cur:
             cur.execute(Path(sql_path).read_text(encoding="utf-8"))
 
-    def try_lock(self) -> bool:
-        """False nếu đang có lượt chạy khác (khóa giữ đến khi unlock/đóng kết nối)."""
+    def try_lock(self, key: int | None = None) -> bool:
+        """False nếu đang có lượt chạy khác (khóa giữ đến khi unlock/đóng kết nối).
+
+        Mặc định là khóa của `tick`/`xml`/`pdf`/`sweep`. `sync-lists` dùng khóa riêng
+        (`SYNC_LOCK_KEY`) để không chạy chồng chính nó mà vẫn không chặn worker.
+        """
         with self._tx() as cur:
-            cur.execute("SELECT pg_try_advisory_lock(%s) AS ok", (self.lock_key,))
+            cur.execute("SELECT pg_try_advisory_lock(%s) AS ok", (key or self.lock_key,))
             return cur.fetchone()["ok"]
 
-    def unlock(self) -> None:
+    def unlock(self, key: int | None = None) -> None:
         with self._tx() as cur:
-            cur.execute("SELECT pg_advisory_unlock(%s)", (self.lock_key,))
+            cur.execute("SELECT pg_advisory_unlock(%s)", (key or self.lock_key,))
+
+    @contextmanager
+    def login_lock(self, mst: str):
+        """Khóa đăng nhập GDT của 1 công ty, giữa các worker.
+
+        Nhiều worker cùng gặp token hết hạn sẽ cùng đăng nhập lại: tốn captcha, và
+        phiên mới có thể đá phiên cũ khiến các worker đá nhau mãi. Chỉ giữ vài giây
+        quanh bước đăng nhập; tải XML/PDF không khóa gì.
+        """
+        with self._tx() as cur:
+            cur.execute("SELECT pg_advisory_lock(%s, hashtext(%s))", (_LOGIN_LOCK_CLASS, mst))
+        try:
+            yield
+        finally:
+            with self._tx() as cur:
+                cur.execute("SELECT pg_advisory_unlock(%s, hashtext(%s))", (_LOGIN_LOCK_CLASS, mst))
 
     # ------------------------------------------------------------------
     # Công ty
@@ -209,35 +233,87 @@ class InvoiceStore:
              RETURNING t.id AS task_id, t.invoice_id, t.attempts, t.next_run_at
             """, (task_type, company_mst, limit))
             claimed = cur.fetchall()
-            if not claimed:
-                return []
+            rows = self._claimed_rows(cur, claimed)
+        return sorted(rows, key=lambda r: (r["_next_run_at"], r["task_id"]))
+
+    def claim_round_robin(self, task_type: str, per_company: int, limit: int,
+                          exclude_msts=()) -> list:
+        """
+        Nhận việc cho worker, xoay vòng qua các công ty: mỗi công ty tối đa
+        `per_company` task đến hạn (cũ trước), tổng tối đa `limit`. Công ty có 10.000 HĐ
+        trong hộp chờ không chặn công ty chỉ có 30 HĐ — cả hai đều có phần trong mỗi mẻ.
+        `exclude_msts`: công ty đang tạm nghỉ (không đăng nhập được, GDT lỗi liên tiếp).
+
+        Kết quả xếp theo công ty rồi theo thứ tự đến hạn.
+        """
+        with self._tx() as cur:
+            # FOR UPDATE không đi chung được với window function → chọn ứng viên trước,
+            # khóa sau. status='pending' lặp lại ở bước khóa để bỏ task mà worker khác
+            # vừa nhận giữa hai bước (READ COMMITTED kiểm lại điều kiện sau khi khóa).
             cur.execute("""
-                SELECT i.*, x.mst_tcgp, x.ma_tra_cuu, x.lookup_url,
-                       x.parsed -> 'tt_khac' AS tt_khac, x.parsed ->> 'ma_cqt' AS ma_cqt,
-                       x.parsed ->> 'dlhdon_id' AS dlhdon_id, x.xml_path,
-                       p.source_id
-                  FROM invoices i
-                  LEFT JOIN invoice_xml x ON x.invoice_id = i.id
-                  LEFT JOIN einvoice_providers p ON p.mst_tcgp = x.mst_tcgp
-                 WHERE i.id = ANY(%s)
-            """, ([c["invoice_id"] for c in claimed],))
-            info = {r["id"]: r for r in cur.fetchall()}
+                WITH ranked AS (
+                    SELECT t.id,
+                           row_number() OVER (PARTITION BY i.company_mst
+                                              ORDER BY t.next_run_at, t.id) AS rn
+                      FROM tasks t JOIN invoices i ON i.id = t.invoice_id
+                     WHERE t.task_type = %s AND t.status = 'pending'
+                       AND t.next_run_at <= now()
+                       AND NOT (i.company_mst = ANY(%s))
+                ), picked AS (
+                    SELECT t.id FROM tasks t
+                     WHERE t.id IN (SELECT id FROM ranked WHERE rn <= %s)
+                       AND t.status = 'pending'
+                     ORDER BY t.id
+                     LIMIT %s
+                     FOR UPDATE SKIP LOCKED
+                )
+                UPDATE tasks t SET status='running', locked_at=now(), updated_at=now()
+                  FROM picked WHERE t.id = picked.id
+             RETURNING t.id AS task_id, t.invoice_id, t.attempts, t.next_run_at
+            """, (task_type, list(exclude_msts), per_company, limit))
+            claimed = cur.fetchall()
+            rows = self._claimed_rows(cur, claimed)
+        return sorted(rows, key=lambda r: (r["company_mst"], r["_next_run_at"], r["task_id"]))
+
+    @staticmethod
+    def _claimed_rows(cur, claimed: list) -> list:
+        """Task vừa nhận → dict: thông tin HĐ + task_id/attempts + (PDF) dữ liệu tra cứu từ XML."""
+        if not claimed:
+            return []
+        cur.execute("""
+            SELECT i.*, x.mst_tcgp, x.ma_tra_cuu, x.lookup_url,
+                   x.parsed -> 'tt_khac' AS tt_khac, x.parsed ->> 'ma_cqt' AS ma_cqt,
+                   x.parsed ->> 'dlhdon_id' AS dlhdon_id, x.xml_path,
+                   p.source_id
+              FROM invoices i
+              LEFT JOIN invoice_xml x ON x.invoice_id = i.id
+              LEFT JOIN einvoice_providers p ON p.mst_tcgp = x.mst_tcgp
+             WHERE i.id = ANY(%s)
+        """, ([c["invoice_id"] for c in claimed],))
+        info = {r["id"]: r for r in cur.fetchall()}
         out = []
-        for c in sorted(claimed, key=lambda c: (c["next_run_at"], c["task_id"])):
+        for c in claimed:
             row = dict(info[c["invoice_id"]])
-            row.update(task_id=c["task_id"], attempts=c["attempts"])
+            row.update(task_id=c["task_id"], attempts=c["attempts"], _next_run_at=c["next_run_at"])
             out.append(row)
         return out
 
-    def release_tasks(self, task_ids: list) -> None:
-        """Trả task về 'pending' KHÔNG tính lần thử (dừng sớm, lỗi đăng nhập...)."""
+    def release_tasks(self, task_ids: list, delay_minutes: int = 0) -> None:
+        """Trả task về 'pending' KHÔNG tính lần thử (dừng sớm, lỗi đăng nhập...).
+
+        `delay_minutes`: hẹn lại sau chừng ấy phút. Worker cần cái này — trả về ngay thì
+        mẻ sau lại nhận đúng những task đó (site NCC vẫn đang lỗi) và quay vòng vô ích.
+        """
         if not task_ids:
             return
         with self._tx() as cur:
             cur.execute("""
-                UPDATE tasks SET status='pending', locked_at=NULL, updated_at=now()
-                 WHERE id = ANY(%s) AND status='running'
-            """, (list(task_ids),))
+                UPDATE tasks SET status='pending', locked_at=NULL, updated_at=now(),
+                       next_run_at = CASE WHEN %(d)s > 0
+                                          THEN GREATEST(next_run_at, now() + %(d)s * interval '1 minute')
+                                          ELSE next_run_at END
+                 WHERE id = ANY(%(ids)s) AND status='running'
+            """, {"d": delay_minutes, "ids": list(task_ids)})
 
     def fail_task(self, task: dict, kind: str, error: str, run_id: int | None) -> str:
         """Ghi 1 lần thất bại, tính lần thử lại theo job_policy. Trả về status mới."""

@@ -11,6 +11,9 @@ Lệnh:
     python web/invoice_job.py pdf [--company MST] [--limit N]   # B2: chỉ PDF từ site NCC, không gọi GDT
     python web/invoice_job.py mail [--days 7] [--limit N]       # chỉ đọc mail hóa đơn (IMAP, chỉ đọc)
     python web/invoice_job.py sweep [--month 2026-09]
+    # Mô hình hàng đợi (thay cho tick): sync-lists sinh việc, worker làm việc liên tục
+    python web/invoice_job.py sync-lists [--company MST]        # 3 lần/ngày: danh sách → hộp chờ XML
+    python web/invoice_job.py worker --type xml|pdf [--once]    # chạy mãi, xoay vòng qua các công ty
     python web/invoice_job.py status
     python web/invoice_job.py requeue --status dead|no_source [--type xml|pdf] [--mst-tcgp X]
     python web/invoice_job.py set-provider --mst-tcgp X --source-id Y [--name ...]
@@ -172,14 +175,28 @@ class TokenProvider:
             if self._token:
                 self.stats["token_reused"] += 1
             else:
-                self._token = self._login()
+                self._token = self._login_locked(rejected=None)
         return self._token
 
     def refresh(self) -> str:
         """GDT từ chối token (401/403) → bỏ token, đăng nhập lại."""
-        self.store.invalidate_token(self.mst)
-        self._token = self._login()
+        self._token = self._login_locked(rejected=self._token)
         return self._token
+
+    def _login_locked(self, rejected: str | None) -> str:
+        """Đăng nhập dưới khóa theo công ty.
+
+        Có khóa rồi thì đọc lại token trong DB trước: worker khác vừa đăng nhập xong
+        (token mới, khác cái bị từ chối) thì dùng luôn, không giải captcha lần nữa.
+        """
+        with self.store.login_lock(self.mst):
+            current = self.store.get_token(self.mst)
+            if current and current != rejected:
+                self.stats["token_reused"] += 1
+                return current
+            if rejected:
+                self.store.invalidate_token(self.mst)
+            return self._login()
 
     def _login(self) -> str:
         if self.logins >= self.MAX_LOGINS_PER_RUN:
@@ -372,37 +389,55 @@ def process_xml(store, company, tokens, breaker, run_id, limit, stats, out_dir) 
         batch = store.claim_tasks("xml", mst, min(CLAIM_BATCH, limit - handled))
         if not batch:
             break
-        for i, task in enumerate(batch):
-            if breaker.open:
-                store.release_tasks([t["task_id"] for t in batch[i:]])
-                break
-            try:
-                _do_xml_task(store, company, tokens, task, run_id, out_dir)
-                breaker.record(True)
-                stats["xml_ok"] += 1
-            except LoginError:
-                store.release_tasks([t["task_id"] for t in batch[i:]])
-                raise
-            except Exception as e:  # noqa: BLE001
-                kind = classify(e)
-                breaker.record(False, kind)
-                if _no_xml_on_gdt(task, kind):
-                    store.mark_no_source(task, "HĐ không mã, Thuế không có XML (500) → coi như gửi "
-                                         "theo bảng tổng hợp; chờ XML/PDF từ mail", run_id,
-                                         kind="summary_only")
-                    stats["xml_summary_only"] += 1
-                    log.info("[%s] XML %s_%s_%s: HĐ không mã, Thuế không có XML → chờ nguồn khác",
-                             mst, task["khmshdon"], task["khhdon"], task["shdon"])
-                else:
-                    status = store.fail_task(task, kind, f"{type(e).__name__}: {e}", run_id)
-                    stats["xml_failed"] += 1
-                    if status == "dead":
-                        stats["xml_dead"] += 1
-                    log.warning("[%s] XML %s_%s_%s lỗi %s (lần %d) → %s: %s", mst,
-                                task["khmshdon"], task["khhdon"], task["shdon"],
-                                kind, task["attempts"] + 1, status, e)
-            handled += 1
-            time.sleep(XML_THROTTLE_SECONDS)
+        handled += xml_batch(store, company, tokens, breaker, run_id, batch, stats, out_dir)
+
+
+def xml_batch(store, company, tokens, breaker, run_id, batch, stats, out_dir,
+              release_delay: int = 0) -> int:
+    """
+    Tải XML cho 1 mẻ task đã nhận (dùng chung cho `tick`/`xml` và worker). Trả về số
+    task đã thử. GDT lỗi liên tiếp → phần còn lại trả về hộp chờ (sau `release_delay`
+    phút); không đăng nhập được → trả phần còn lại rồi ném LoginError.
+    """
+    mst = company["company_mst"]
+    handled = 0
+    for i, task in enumerate(batch):
+        if breaker.open:
+            store.release_tasks([t["task_id"] for t in batch[i:]], **_delay(release_delay))
+            break
+        try:
+            _do_xml_task(store, company, tokens, task, run_id, out_dir)
+            breaker.record(True)
+            stats["xml_ok"] += 1
+        except LoginError:
+            store.release_tasks([t["task_id"] for t in batch[i:]], **_delay(release_delay))
+            raise
+        except Exception as e:  # noqa: BLE001
+            kind = classify(e)
+            breaker.record(False, kind)
+            if _no_xml_on_gdt(task, kind):
+                store.mark_no_source(task, "HĐ không mã, Thuế không có XML (500) → coi như gửi "
+                                     "theo bảng tổng hợp; chờ XML/PDF từ mail", run_id,
+                                     kind="summary_only")
+                stats["xml_summary_only"] += 1
+                log.info("[%s] XML %s_%s_%s: HĐ không mã, Thuế không có XML → chờ nguồn khác",
+                         mst, task["khmshdon"], task["khhdon"], task["shdon"])
+            else:
+                status = store.fail_task(task, kind, f"{type(e).__name__}: {e}", run_id)
+                stats["xml_failed"] += 1
+                if status == "dead":
+                    stats["xml_dead"] += 1
+                log.warning("[%s] XML %s_%s_%s lỗi %s (lần %d) → %s: %s", mst,
+                            task["khmshdon"], task["khhdon"], task["shdon"],
+                            kind, task["attempts"] + 1, status, e)
+        handled += 1
+        time.sleep(XML_THROTTLE_SECONDS)
+    return handled
+
+
+def _delay(minutes: int) -> dict:
+    """release_tasks(..., delay_minutes=N) chỉ khi N > 0 — giữ chữ ký cũ cho lối `tick`."""
+    return {"delay_minutes": minutes} if minutes else {}
 
 
 # ---------------------------------------------------------------------------
@@ -431,49 +466,62 @@ def process_pdf(store, company, run_id, limit, stats, out_dir) -> None:
             batch = store.claim_tasks("pdf", mst, min(CLAIM_BATCH, limit - handled))
             if not batch:
                 break
-            for task in batch:
-                # source_id gắn tay (set-provider) ưu tiên; không có thì theo MSTTCGP
-                adapter = (pdf_providers.get_adapter(task.get("source_id"))
-                           or pdf_providers.adapter_for_mst_tcgp(task.get("mst_tcgp")))
-                if adapter is None:
-                    reason = (f"Chưa có adapter cho MSTTCGP {task.get('mst_tcgp') or '?'}"
-                              if not task.get("source_id")
-                              else f"source_id {task['source_id']!r} chưa đăng ký trong pdf_providers")
-                    store.mark_no_source(task, reason, run_id)
-                    stats["pdf_no_source"] += 1
-                    continue
-                br = breakers.setdefault(adapter.source_id, job_policy.CircuitBreaker())
-                if br.open or handled >= limit:
-                    deferred.append(task["task_id"])
-                    continue
-                handled += 1        # --limit chỉ tính HĐ thật sự gọi site NCC
-                try:
-                    _backfill_from_xml(task, out_dir)
-                    pdf = adapter.fetch_pdf(dict(task))
-                    if not pdf.startswith(b"%PDF") or len(pdf) < 1000:
-                        raise TaskError("Nội dung tải về không phải PDF hợp lệ", "bad_content")
-                    path = invoice_path(out_dir, "pdf", task, mst, "pdf")
-                    atomic_write(path, pdf)
-                    store.complete_pdf(task, run_id, path.relative_to(out_dir).as_posix(),
-                                       hashlib.sha256(pdf).hexdigest(), adapter.source_id)
-                    br.record(True)
-                    stats["pdf_ok"] += 1
-                    log.info("[%s] PDF OK %s | bán %s | %s → %s", mst, _label(task), task["nbmst"],
-                             adapter.source_id, path.relative_to(out_dir).as_posix())
-                except Exception as e:  # noqa: BLE001
-                    kind = classify(e)
-                    if kind == "no_portal":
-                        # Adapter có nhưng chưa biết cổng của người bán: nằm chờ, không tốn lượt
-                        store.mark_no_source(task, str(e), run_id, kind="no_portal")
-                        stats["pdf_no_portal"] += 1
-                        continue
-                    br.record(False, kind)
-                    status = store.fail_task(task, kind, f"{type(e).__name__}: {e}", run_id)
-                    stats["pdf_failed"] += 1
-                    log.warning("[%s] PDF %s_%s_%s (%s) lỗi %s → %s: %s", mst, task["khmshdon"],
-                                task["khhdon"], task["shdon"], adapter.source_id, kind, status, e)
+            handled += pdf_batch(store, mst, run_id, batch, stats, out_dir, breakers, deferred,
+                                 limit - handled)
     finally:
         store.release_tasks(deferred)
+
+
+def pdf_batch(store, mst, run_id, batch, stats, out_dir, breakers, deferred,
+              limit: int | None = None) -> int:
+    """
+    Lấy PDF cho 1 mẻ task đã nhận (dùng chung cho `tick`/`pdf` và worker). Site NCC đang
+    ngắt mạch, hoặc đã đủ `limit` HĐ gọi site → task vào `deferred` để người gọi trả lại.
+    Trả về số HĐ thật sự gọi site NCC.
+    """
+    handled = 0
+    for task in batch:
+        # source_id gắn tay (set-provider) ưu tiên; không có thì theo MSTTCGP
+        adapter = (pdf_providers.get_adapter(task.get("source_id"))
+                   or pdf_providers.adapter_for_mst_tcgp(task.get("mst_tcgp")))
+        if adapter is None:
+            reason = (f"Chưa có adapter cho MSTTCGP {task.get('mst_tcgp') or '?'}"
+                      if not task.get("source_id")
+                      else f"source_id {task['source_id']!r} chưa đăng ký trong pdf_providers")
+            store.mark_no_source(task, reason, run_id)
+            stats["pdf_no_source"] += 1
+            continue
+        br = breakers.setdefault(adapter.source_id, job_policy.CircuitBreaker())
+        if br.open or (limit is not None and handled >= limit):
+            deferred.append(task["task_id"])
+            continue
+        handled += 1        # --limit chỉ tính HĐ thật sự gọi site NCC
+        try:
+            _backfill_from_xml(task, out_dir)
+            pdf = adapter.fetch_pdf(dict(task))
+            if not pdf.startswith(b"%PDF") or len(pdf) < 1000:
+                raise TaskError("Nội dung tải về không phải PDF hợp lệ", "bad_content")
+            path = invoice_path(out_dir, "pdf", task, mst, "pdf")
+            atomic_write(path, pdf)
+            store.complete_pdf(task, run_id, path.relative_to(out_dir).as_posix(),
+                               hashlib.sha256(pdf).hexdigest(), adapter.source_id)
+            br.record(True)
+            stats["pdf_ok"] += 1
+            log.info("[%s] PDF OK %s | bán %s | %s → %s", mst, _label(task), task["nbmst"],
+                     adapter.source_id, path.relative_to(out_dir).as_posix())
+        except Exception as e:  # noqa: BLE001
+            kind = classify(e)
+            if kind == "no_portal":
+                # Adapter có nhưng chưa biết cổng của người bán: nằm chờ, không tốn lượt
+                store.mark_no_source(task, str(e), run_id, kind="no_portal")
+                stats["pdf_no_portal"] += 1
+                continue
+            br.record(False, kind)
+            status = store.fail_task(task, kind, f"{type(e).__name__}: {e}", run_id)
+            stats["pdf_failed"] += 1
+            log.warning("[%s] PDF %s_%s_%s (%s) lỗi %s → %s: %s", mst, task["khmshdon"],
+                        task["khhdon"], task["shdon"], adapter.source_id, kind, status, e)
+    return handled
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +777,202 @@ def cmd_tick(store, args) -> int:
         store.unlock()
 
 
+# ---------------------------------------------------------------------------
+# Mô hình hàng đợi: sync-lists (3 lần/ngày) sinh việc, worker chạy liên tục làm việc
+# ---------------------------------------------------------------------------
+
+def cmd_sync_lists(store, args) -> int:
+    """
+    Chỉ lấy danh sách GDT → HĐ mới vào hộp chờ XML. Không tải XML (việc của worker).
+    Ngày 5/15 quét lại tháng trước như `tick`. Khóa riêng: không chạy chồng chính nó,
+    nhưng không chặn worker hay `tick`.
+    """
+    from invoice_store import SYNC_LOCK_KEY
+    if not store.try_lock(SYNC_LOCK_KEY):
+        log.info("sync-lists khác đang chạy → thoát")
+        return 0
+    try:
+        companies = _companies(store, args.company)
+        today = today_vn()
+        if today.day in job_policy.SWEEP_DAYS and not store.last_ok_run("sweep", today):
+            log.info("Hôm nay ngày %d → quét lại tháng trước", today.day)
+            run_sweep(store, companies, None)
+        run_id = store.start_run("sync-lists")
+        all_stats, ok = {}, True
+        try:
+            for company in companies:
+                mst = company["company_mst"]
+                stats = Counter()
+                store.begin_run_company(run_id, mst)
+                breaker = job_policy.CircuitBreaker()
+                try:
+                    sync_lists(store, company, TokenProvider(store, company, stats), _sub_types(),
+                               lambda st, m=mst: job_policy.sync_windows(store.get_cursor(m, st), today),
+                               breaker, stats)
+                except LoginError as e:
+                    stats["login_error"] = str(e)
+                    log.error("[%s] %s", mst, e)
+                if stats["sync_errors"] or "login_error" in stats or breaker.open:
+                    ok = False
+                all_stats[mst] = dict(stats)
+                store.finish_run_company(run_id, mst, _company_status(stats, breaker), dict(stats))
+                log.info("[%s] danh sách xong: GDT trả %d HĐ, mới %d vào hộp chờ",
+                         mst, stats["listed"], stats["new_invoices"])
+        finally:
+            store.finish_run(run_id, "ok" if ok else "partial", {"companies": all_stats})
+        log_box(store)
+        return 0 if ok else 1
+    finally:
+        store.unlock(SYNC_LOCK_KEY)
+
+
+class _WorkerRun:
+    """
+    1 dòng job_runs cho 1 "đợt" việc của worker: mở khi nhận được việc, đóng khi hộp chờ
+    rỗng hoặc đã quá ROLL_SECONDS. Worker ngồi chờ không sinh dòng nào. Token và bộ ngắt
+    mạch GDT sống theo đợt, nên giới hạn số lần đăng nhập của TokenProvider cũng reset
+    theo đợt chứ không khóa chết worker chạy nhiều ngày.
+    """
+    ROLL_SECONDS = 3600
+
+    def __init__(self, store, command: str):
+        self.store, self.command = store, command
+        self.run_id = None
+
+    def ensure(self) -> int:
+        if self.run_id is None:
+            self.run_id = self.store.start_run(self.command)
+            self.started = time.monotonic()
+            self.stats: dict = {}
+            self.tokens: dict = {}
+            self.gdt_breakers: dict = {}
+            self.pdf_breakers: dict = {}
+        return self.run_id
+
+    def due(self) -> bool:
+        return self.run_id is not None and time.monotonic() - self.started > self.ROLL_SECONDS
+
+    def stats_for(self, mst: str) -> Counter:
+        if mst not in self.stats:
+            self.stats[mst] = Counter()
+            self.store.begin_run_company(self.run_id, mst)
+        return self.stats[mst]
+
+    def save(self, mst: str) -> None:
+        stats = self.stats[mst]
+        self.store.finish_run_company(self.run_id, mst,
+                                      _company_status(stats, self.gdt_breakers.get(mst)), dict(stats))
+
+    def close(self, status: str | None = None) -> None:
+        if self.run_id is None:
+            return
+        if status is None:
+            status = ("partial" if any(_company_status(s, self.gdt_breakers.get(m)) != "ok"
+                                       for m, s in self.stats.items()) else "ok")
+        self.store.finish_run(self.run_id, status,
+                              {"companies": {m: dict(s) for m, s in self.stats.items()}})
+        self.run_id = None
+
+
+WORKER_PER_COMPANY = 20     # mỗi công ty tối đa bấy nhiêu HĐ mỗi mẻ → xoay vòng
+WORKER_BATCH = 200          # tổng HĐ mỗi mẻ
+WORKER_IDLE_SECONDS = 60    # hộp chờ rỗng → ngủ chừng này rồi xem lại
+COOLDOWN_MINUTES = 15       # công ty không đăng nhập được / GDT lỗi liên tiếp → nghỉ
+DEFER_MINUTES = 10          # site NCC đang ngắt mạch → hẹn task lại sau
+
+
+def run_worker(store, task_type: str, out_dir: Path, *, per_company: int = WORKER_PER_COMPANY,
+               batch: int = WORKER_BATCH, idle: float = WORKER_IDLE_SECONDS, once: bool = False,
+               stop=lambda: False) -> int:
+    """
+    Rút hộp chờ `task_type` ('xml' | 'pdf') liên tục, xoay vòng qua các công ty.
+    `once`: hộp chờ rỗng thì thoát (để chạy thử / test) thay vì ngủ chờ việc mới.
+    Không dùng khóa toàn cục: nhiều worker chạy song song, SKIP LOCKED lo phần chia việc.
+    """
+    run = _WorkerRun(store, f"worker-{task_type}")
+    cooldown: dict = {}         # MST → time.monotonic() hết nghỉ
+    claimed: list = []
+    log_month = f"{today_vn():%Y-%m}"
+    reclaimed = store.reclaim_stale()
+    if reclaimed:
+        log.info("Thu hồi %d task kẹt", reclaimed)
+    try:
+        while not stop():
+            if run.due():
+                run.close()
+            if f"{today_vn():%Y-%m}" != log_month:     # chạy qua đầu tháng → sang file log mới
+                log_month = f"{today_vn():%Y-%m}"
+                if logging.getLogger().handlers:
+                    _setup_logging()
+            now = time.monotonic()
+            for m in [m for m, until in cooldown.items() if until <= now]:
+                del cooldown[m]
+            claimed = store.claim_round_robin(task_type, per_company, batch, exclude_msts=list(cooldown))
+            if not claimed:
+                run.close()
+                if once:
+                    break
+                time.sleep(idle)
+                continue
+
+            run_id = run.ensure()
+            if task_type == "pdf" and not run.stats:
+                _prepare_queues(store)          # NCC vừa có adapter → HĐ no_source quay lại
+            companies = {c["company_mst"]: c for c in store.active_companies()}
+            groups: dict = {}
+            for task in claimed:
+                groups.setdefault(task["company_mst"], []).append(task)
+
+            for mst, tasks in groups.items():
+                company = companies.get(mst)
+                if company is None:                 # công ty đã tắt (active=false)
+                    store.release_tasks([t["task_id"] for t in tasks], delay_minutes=COOLDOWN_MINUTES)
+                    continue
+                stats = run.stats_for(mst)
+                if task_type == "xml":
+                    tokens = run.tokens.setdefault(mst, TokenProvider(store, company, stats))
+                    breaker = run.gdt_breakers.setdefault(mst, job_policy.CircuitBreaker())
+                    try:
+                        xml_batch(store, company, tokens, breaker, run_id, tasks, stats, out_dir,
+                                  release_delay=COOLDOWN_MINUTES)
+                    except LoginError as e:
+                        stats["login_error"] = str(e)
+                        cooldown[mst] = time.monotonic() + COOLDOWN_MINUTES * 60
+                        log.error("[%s] %s → nghỉ %d phút", mst, e, COOLDOWN_MINUTES)
+                    if breaker.open:
+                        stats["stopped_early"] = 1
+                        cooldown[mst] = time.monotonic() + COOLDOWN_MINUTES * 60
+                        run.gdt_breakers[mst] = job_policy.CircuitBreaker()
+                        log.warning("[%s] GDT lỗi liên tiếp → nghỉ %d phút", mst, COOLDOWN_MINUTES)
+                else:
+                    deferred: list = []
+                    try:
+                        pdf_batch(store, mst, run_id, tasks, stats, out_dir, run.pdf_breakers, deferred)
+                    finally:
+                        store.release_tasks(deferred, delay_minutes=DEFER_MINUTES)
+                run.save(mst)
+            claimed = []
+        return 0
+    except BaseException:
+        # Ctrl+C / lỗi bất ngờ: trả mọi task mẻ này còn 'running' (task đã xong không bị đụng)
+        store.release_tasks([t["task_id"] for t in claimed])
+        run.close("error")
+        raise
+    finally:
+        run.close()
+
+
+def cmd_worker(store, args) -> int:
+    log.info("Worker %s bắt đầu (mỗi công ty %d HĐ/mẻ, tối đa %d HĐ/mẻ)%s",
+             args.type, args.per_company, args.batch, ", chạy tới khi hộp chờ rỗng" if args.once else "")
+    try:
+        return run_worker(store, args.type, output_dir(), per_company=args.per_company,
+                          batch=args.batch, idle=args.idle, once=args.once)
+    except KeyboardInterrupt:
+        log.info("Worker %s dừng (Ctrl+C)", args.type)
+        return 0
+
+
 def cmd_sweep(store, args) -> int:
     if not store.try_lock():
         log.info("Đang có lượt chạy khác → thoát")
@@ -865,6 +1109,18 @@ def main(argv=None) -> int:
 
     sub.add_parser("status", help="tình trạng hộp chờ")
 
+    p = sub.add_parser("sync-lists", help="chỉ lấy danh sách GDT → HĐ mới vào hộp chờ (3 lần/ngày)")
+    p.add_argument("--company", help="chỉ chạy cho 1 MST")
+
+    p = sub.add_parser("worker", help="rút hộp chờ liên tục, xoay vòng qua các công ty")
+    p.add_argument("--type", required=True, choices=["xml", "pdf"])
+    p.add_argument("--per-company", type=int, default=WORKER_PER_COMPANY,
+                   help="số HĐ tối đa mỗi công ty mỗi mẻ")
+    p.add_argument("--batch", type=int, default=WORKER_BATCH, help="tổng số HĐ tối đa mỗi mẻ")
+    p.add_argument("--idle", type=float, default=WORKER_IDLE_SECONDS,
+                   help="hộp chờ rỗng thì ngủ bao nhiêu giây")
+    p.add_argument("--once", action="store_true", help="hộp chờ rỗng thì thoát (chạy thử)")
+
     p = sub.add_parser("requeue", help="đưa task dead/no_source về hàng đợi")
     p.add_argument("--status", required=True, choices=["dead", "no_source"])
     p.add_argument("--type", choices=["xml", "pdf"])
@@ -888,7 +1144,7 @@ def main(argv=None) -> int:
         return {
             "init-db": cmd_init_db, "add-company": cmd_add_company, "tick": cmd_tick,
             "xml": cmd_xml, "pdf": cmd_pdf, "mail": cmd_mail, "sweep": cmd_sweep, "status": cmd_status, "requeue": cmd_requeue,
-            "set-provider": cmd_set_provider,
+            "set-provider": cmd_set_provider, "sync-lists": cmd_sync_lists, "worker": cmd_worker,
         }[args.cmd](store, args)
     finally:
         store.close()
