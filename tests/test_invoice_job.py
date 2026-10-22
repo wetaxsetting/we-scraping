@@ -394,6 +394,7 @@ def test_batch_download_without_zip_dir_saves_no_zip(tmp_path, monkeypatch):
 class _PdfStore:
     def __init__(self, locked=False):
         self.locked, self.calls, self.runs = locked, [], []
+        self.company_runs = []
 
     def try_lock(self):
         self.calls.append("lock")
@@ -419,6 +420,12 @@ class _PdfStore:
 
     def finish_run(self, run_id, status, stats):
         self.runs[-1][1:] = [status, stats]
+
+    def begin_run_company(self, run_id, company_mst):
+        self.company_runs.append(("begin", run_id, company_mst))
+
+    def finish_run_company(self, run_id, company_mst, status, stats):
+        self.company_runs.append(("finish", run_id, company_mst, status, stats))
 
     def status_report(self):
         return {"counts": [{"task_type": "pdf", "status": "pending", "n": 3}]}
@@ -456,6 +463,34 @@ def test_pdf_command_runs_only_pdf_queue_for_each_company(pdf_cmd, tmp_path):
                                                        "0100112233": {"pdf_ok": 1}}}]]
     assert store.calls[0] == "lock" and store.calls[-1] == "unlock"
     assert "reclaim" in store.calls                          # thu hồi task kẹt như tick
+
+
+def test_pdf_command_logs_one_row_per_company(pdf_cmd):
+    """job_run_companies: mỗi MST 1 dòng, có mốc bắt đầu trước khi gọi site NCC."""
+    store = _PdfStore()
+    invoice_job.cmd_pdf(store, invoice_job.argparse.Namespace(company=None, limit=20))
+
+    assert store.company_runs == [
+        ("begin", 7, "1201496252"),
+        ("finish", 7, "1201496252", "ok", {"pdf_ok": 1}),
+        ("begin", 7, "0100112233"),
+        ("finish", 7, "0100112233", "ok", {"pdf_ok": 1}),
+    ]
+
+
+def test_company_status_separates_no_login_from_some_failures():
+    """'error' = công ty đó không làm được gì; HĐ lẻ lỗi chỉ là 'partial'."""
+    assert invoice_job._company_status(invoice_job.Counter()) == "ok"
+    assert invoice_job._company_status(invoice_job.Counter({"pdf_ok": 3})) == "ok"
+    assert invoice_job._company_status(invoice_job.Counter({"xml_ok": 2, "pdf_failed": 1})) == "partial"
+    assert invoice_job._company_status(invoice_job.Counter({"sync_errors": 1})) == "partial"
+    assert invoice_job._company_status(invoice_job.Counter({"login_error": "sai mật khẩu"})) == "error"
+
+    breaker = job_policy.CircuitBreaker(threshold=2)
+    for _ in range(2):
+        breaker.record(False, "network")
+    assert breaker.open
+    assert invoice_job._company_status(invoice_job.Counter({"xml_ok": 5}), breaker) == "partial"
 
 
 def test_pdf_command_filters_company(pdf_cmd):

@@ -231,3 +231,17 @@ CREATE TABLE IF NOT EXISTS job_runs (
     status      TEXT,
     stats       JSONB
 );
+
+-- Mỗi lượt chạy × mỗi công ty một dòng: lấy dữ liệu từ Thuế và lấy PDF bản gốc từ NCC
+-- đều ghi vào đây. job_runs.stats vẫn giữ bản tổng của cả lượt; bảng này để truy theo
+-- MST bằng SQL thẳng thay vì đào JSONB.
+CREATE TABLE IF NOT EXISTS job_run_companies (
+    run_id      BIGINT NOT NULL REFERENCES job_runs ON DELETE CASCADE,
+    company_mst VARCHAR(14) NOT NULL REFERENCES companies,
+    started_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ,
+    status      TEXT,                            -- ok | partial | error
+    stats       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (run_id, company_mst)
+);
+CREATE INDEX IF NOT EXISTS job_run_companies_mst ON job_run_companies (company_mst, started_at DESC);

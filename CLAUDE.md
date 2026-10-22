@@ -302,7 +302,7 @@ Khi chạy `fetch_pdf.py` luôn thêm `--company 1201496252`.
 | `xml_parser.py` | Parse XML theo QĐ 1233 (docs/QD 1233_Quy dinh chuan DL HD CT.pdf), QR EMV, cảnh báo, `dlhdon_id` |
 | `job_policy.py` | Chính sách thử lại theo loại lỗi, ngắt mạch (circuit breaker), cửa sổ 30 ngày, `summary_only` (hthdon=2) |
 | `invoice_store.py` | Lớp PostgreSQL: hàng đợi `tasks` (FOR UPDATE SKIP LOCKED), khóa advisory, JWT cache, upsert HĐ/NCC/chi tiết, mail |
-| `db/schema.sql` | companies, gdt_sessions, partners, einvoice_providers, invoices, invoice_details, invoice_xml, invoice_pdf, tasks, task_attempts, sync_cursors, job_runs, email_messages, email_files, email_links |
+| `db/schema.sql` | companies, gdt_sessions, partners, einvoice_providers, invoices, invoice_details, invoice_xml, invoice_pdf, tasks, task_attempts, sync_cursors, job_runs, job_run_companies, email_messages, email_files, email_links |
 | `web/invoice_job.py` | CLI của job |
 | `web/fetch_pdf.py` | Tải PDF từ XML trên đĩa (không DB); `invoice_from_xml()` = dict HĐ chuẩn cho adapter |
 | `pdf_providers/` | 1 adapter/NCC, đăng ký trong `__init__.py`; `common.py` (HTTP, `solve_captcha`, `check_pdf_is_invoice`) |
@@ -350,6 +350,15 @@ Code tách 2 hàm chính: `run_xml_step` (bước 2–4: GDT → XML, lệnh `xm
 7. **Lỗi:** task được hẹn giờ thử lại theo `RETRY_POLICY`. GDT lỗi tạm thời 5 lần liên tiếp thì dừng phần
    GDT của lượt đó. Mỗi site NCC có circuit breaker riêng.
 
+**Nhật ký theo MST** (`job_run_companies`, thêm 22/10): mỗi lượt chạy × mỗi công ty 1 dòng
+(`run_id, company_mst, started_at, finished_at, status, stats`), ghi ở cả 3 bước — GDT, mail→PDF
+và PDF từ site NCC. `job_runs.stats` vẫn giữ bản tổng; bảng này để query theo MST không phải đào
+JSONB. `tick` ghi 2 lần cho cùng 1 công ty (sau phần GDT, sau phần PDF) nên `stats` được **trộn**
+bằng `||`, không ghi đè. `status` theo công ty: `error` = công ty đó không đăng nhập được GDT,
+`partial` = chạy được nhưng có HĐ lỗi / ngắt mạch, `ok` = sạch — **khác** `job_runs.status` vốn
+là trạng thái của cả lượt. Dòng của các lượt trước 22/10 là dồn ngược từ `job_runs.stats` nên
+mang `status` mức lượt (vd lượt #23 ghi `ok` dù có 3 XML lỗi).
+
 ## 2.5 Những điểm dễ sai về GDT
 
 - Mọi request phải có header `request-id` (UUID), thiếu là bị 403 "hành vi không hợp lệ".
@@ -384,6 +393,14 @@ Các adapter dưới đây đã thử thật trên XML thật (10/2026):
 | `minvoice` | M-INVOICE | 0106026495 (+ -001) | "Số bảo mật" / "Mã tra cứu" + MST bán | không |
 | `myinvoice` | My Software | 0108971656 | MCCQT | không |
 | `visnam` | Visnam | 0401486901 | `QuanLy_SoBaoMat` | `g_1500x350` |
+
+**Kiểm trên DB 22/10** (PDF đã lưu, đều qua `check_pdf_is_invoice`): chạy chắc trên **toàn nền tảng**
+(nhiều người bán khác nhau): MISA 39 PDF/15 người bán, BKAV 35/11, Viettel 23/6, EasyInvoice 7/6,
+M-Invoice 10/4. Chỉ mới chứng minh **cho đúng 1 người bán**: HILO (chỉ cổng Grab, 52), VNPT (chỉ
+Petrolimex, 14 — HST chung thử 7 lần đều `no_portal`, cổng -tt78 HCM chưa lấy được PDF nào qua job),
+VETC (chỉ thu phí 0107500414, 7), Visnam (Ngân Phi, 7), My Software (DHN, 2), iPOS (Làng Mèo, 1, qua link mail).
+Người bán mới của nhóm "1 người bán" có thể cần cổng riêng (`no_portal`). Lỗi còn lại chỉ là tạm thời
+(timeout/HTTP 520, tự thử lại).
 
 Cách thêm 1 NCC:
 1. Viết `pdf_providers/<ten>.py`, kế thừa `PdfAdapter`, khai báo `mst_tcgp`, cuối file gọi `register()`.

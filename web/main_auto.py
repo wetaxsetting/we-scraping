@@ -101,6 +101,7 @@ def _run(store, company: dict, args, end: date) -> int:
     out_dir = invoice_job.output_dir()
     stats = Counter()
     run_id = store.start_run("manual")
+    store.begin_run_company(run_id, mst)
     status = "ok"
     try:
         tokens = invoice_job.TokenProvider(store, company, stats)
@@ -130,6 +131,7 @@ def _run(store, company: dict, args, end: date) -> int:
     finally:
         store.finish_run(run_id, status, {"company": mst, "from": str(args.from_date), "to": str(end),
                                           "types": types, "stats": dict(stats)})
+        store.finish_run_company(run_id, mst, status, dict(stats))
     log.info("[%s] xong: %d HĐ trên GDT, %d HĐ mới vào DB, %d XML, %d XML lỗi",
              mst, stats["listed"], stats["new_invoices"], stats["xml_ok"], stats["xml_failed"])
     print("\nXem tình trạng: python -X utf8 web/invoice_job.py status")

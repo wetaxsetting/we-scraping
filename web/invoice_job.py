@@ -502,6 +502,7 @@ def run_sweep(store, companies, month: str | None) -> bool:
     try:
         for company in companies:
             stats = Counter()
+            store.begin_run_company(run_id, company["company_mst"])
             breaker = job_policy.CircuitBreaker()
             try:
                 sync_lists(store, company, TokenProvider(store, company, stats), _sub_types(),
@@ -512,12 +513,28 @@ def run_sweep(store, companies, month: str | None) -> bool:
                 log.error("[%s] sweep: %s", company["company_mst"], e)
             ok = ok and not stats["sync_errors"] and "login_error" not in stats and not breaker.open
             all_stats[company["company_mst"]] = dict(stats)
+            store.finish_run_company(run_id, company["company_mst"],
+                                     _company_status(stats, breaker), dict(stats))
             log.info("[%s] sweep %s→%s: %d HĐ mới", company["company_mst"], first, last,
                      stats["new_invoices"])
     finally:
         store.finish_run(run_id, "ok" if ok else "partial",
                          {"month": f"{first:%Y-%m}", "companies": all_stats})
     return ok
+
+
+def _company_status(stats, breaker=None) -> str:
+    """Trạng thái 1 công ty trong 1 lượt, cho job_run_companies.
+
+    'error' = công ty đó không làm được gì (không đăng nhập được GDT); 'partial' = có
+    phần chạy được nhưng có HĐ lỗi hoặc GDT/site NCC lỗi liên tiếp phải dừng sớm.
+    """
+    if "login_error" in stats:
+        return "error"
+    if (stats["sync_errors"] or stats["xml_failed"] or stats["pdf_failed"]
+            or (breaker is not None and breaker.open)):
+        return "partial"
+    return "ok"
 
 
 def _prepare_queues(store) -> None:
@@ -546,10 +563,12 @@ def cmd_pdf(store, args) -> int:
             for company in _companies(store, args.company):
                 mst = company["company_mst"]
                 stats = Counter()
+                store.begin_run_company(run_id, mst)
                 process_pdf(store, company, run_id, args.limit, stats, out_dir)
                 if stats["pdf_failed"]:
                     overall = "partial"
                 all_stats[mst] = dict(stats)
+                store.finish_run_company(run_id, mst, _company_status(stats), dict(stats))
                 log.info("[%s] PDF xong: %s", mst, dict(stats))
         except Exception:
             overall = "error"
@@ -624,6 +643,7 @@ def run_xml_step(store, companies, run_id, out_dir, xml_limit: int) -> tuple:
     for company in companies:
         mst = company["company_mst"]
         stats = per_company[mst] = Counter()
+        store.begin_run_company(run_id, mst)
         tokens = TokenProvider(store, company, stats)
         breaker = job_policy.CircuitBreaker()
         try:
@@ -639,6 +659,7 @@ def run_xml_step(store, companies, run_id, out_dir, xml_limit: int) -> tuple:
             log.warning("[%s] GDT lỗi liên tiếp → dừng phần GDT, chờ lượt sau", mst)
         if stats["sync_errors"] or "login_error" in stats or breaker.open:
             ok = False
+        store.finish_run_company(run_id, mst, _company_status(stats, breaker), dict(stats))
     return per_company, ok
 
 
@@ -691,8 +712,10 @@ def cmd_tick(store, args) -> int:
             for company in companies:
                 mst = company["company_mst"]
                 stats = per_company[mst]
+                store.begin_run_company(run_id, mst)
                 process_pdf(store, company, run_id, args.pdf_limit, stats, out_dir)
                 all_stats[mst] = dict(stats)
+                store.finish_run_company(run_id, mst, _company_status(stats), dict(stats))
                 log.info("[%s] xong: %s", mst, dict(stats))
         except Exception:
             overall = "error"

@@ -30,6 +30,7 @@ invoice_job = main_auto.invoice_job
 class _Store:
     def __init__(self, companies, locked=False):
         self.companies, self.locked, self.runs, self.closed = companies, locked, [], False
+        self.company_runs = []
 
     def active_companies(self):
         return self.companies
@@ -49,6 +50,12 @@ class _Store:
 
     def finish_run(self, run_id, status, stats):
         self.runs[-1][1:] = [status, stats]
+
+    def begin_run_company(self, run_id, company_mst):
+        self.company_runs.append(("begin", run_id, company_mst))
+
+    def finish_run_company(self, run_id, company_mst, status, stats):
+        self.company_runs.append(("finish", run_id, company_mst, status, stats))
 
 
 CO = {"company_mst": "1201496252", "gdt_username": "1201496252-U002"}

@@ -628,6 +628,32 @@ class InvoiceStore:
                 UPDATE job_runs SET finished_at=now(), status=%s, stats=%s WHERE id=%s
             """, (status, Json(stats, dumps=_json_dumps), run_id))
 
+    def begin_run_company(self, run_id: int, company_mst: str) -> None:
+        """Mốc bắt đầu của 1 công ty trong lượt chạy. Gọi lại không sao (giữ mốc đầu)."""
+        with self._tx() as cur:
+            cur.execute("""
+                INSERT INTO job_run_companies (run_id, company_mst) VALUES (%s, %s)
+                ON CONFLICT (run_id, company_mst) DO NOTHING
+            """, (run_id, company_mst))
+
+    def finish_run_company(self, run_id: int, company_mst: str, status: str,
+                           stats: dict) -> None:
+        """Kết quả của 1 công ty trong lượt chạy.
+
+        `tick` gọi hai lần cho cùng một công ty — một lần sau phần GDT, một lần sau
+        phần PDF — nên stats được **trộn** chứ không ghi đè: khóa của lượt sau thắng,
+        khóa chỉ có ở lượt trước vẫn còn.
+        """
+        with self._tx() as cur:
+            cur.execute("""
+                INSERT INTO job_run_companies (run_id, company_mst, finished_at, status, stats)
+                     VALUES (%s, %s, now(), %s, %s)
+                ON CONFLICT (run_id, company_mst) DO UPDATE
+                    SET finished_at = now(),
+                        status      = EXCLUDED.status,
+                        stats       = job_run_companies.stats || EXCLUDED.stats
+            """, (run_id, company_mst, status, Json(stats, dumps=_json_dumps)))
+
     def status_report(self) -> dict:
         with self._tx() as cur:
             cur.execute("""
