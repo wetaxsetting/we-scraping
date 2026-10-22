@@ -10,6 +10,7 @@ and ``--strict`` refuses to guess at all.
 from __future__ import annotations
 
 import csv
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,27 @@ from .utils import get_device
 log = logging.getLogger("captcha")
 
 LOW_CONFIDENCE = 0.6
+
+
+def _check_charset(trained: Optional[str], group: GroupCfg, path: str) -> str:
+    """The alphabet to decode a checkpoint's output indices with.
+
+    The trained alphabet wins, because the model's output indices are defined by
+    it. Under ``charset_mode: core`` it is the frequent core of the data, a
+    subset of the configured charset -- decoding with the configured one instead
+    shifts every index past the first trimmed character. Anything outside that
+    subset means the checkpoint belongs to a different group.
+    """
+    if not trained:
+        raise ValueError(
+            f"{path} records no charset, so its output indices cannot be "
+            f"decoded; retrain or re-export {group.group_id}")
+    extra = sorted(set(trained) - set(group.charset))
+    if extra:
+        raise ValueError(
+            f"{path} was trained on {''.join(extra)!r}, which the config for "
+            f"{group.group_id} does not list ({group.charset!r}); refusing to load")
+    return trained
 
 
 @dataclass
@@ -66,6 +88,11 @@ class Predictor:
         self.strict = strict
         self.enforce_group = enforce_group
         self._cache: Dict[str, object] = {}
+        # Decode alphabet per group, taken from the checkpoint rather than the
+        # config: under charset_mode "core" the trained alphabet is the frequent
+        # core, which is a subset of the configured one. Decoding with the
+        # configured charset shifts every index (see 1.3 in CLAUDE.md).
+        self._charsets: Dict[str, str] = {}
         self.unmatched_sizes: Dict[Tuple[int, int], int] = {}
 
     # ------------------------------------------------------------- loading
@@ -80,10 +107,8 @@ class Predictor:
                 f"(python -m captcha.train --group {group.group_id})")
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
         meta = ckpt["meta"]
-        if meta.get("charset") != group.charset:
-            raise ValueError(
-                f"checkpoint {path} was trained with charset {meta.get('charset')!r} "
-                f"but the config says {group.charset!r}; refusing to load")
+        self._charsets[group.group_id] = _check_charset(
+            meta.get("charset"), group, str(path))
         model = CRNN(num_classes=meta["num_classes"], in_channels=meta["in_channels"],
                      hidden=meta["hidden"], rnn_layers=meta["rnn_layers"],
                      input_height=meta["height"])
@@ -102,6 +127,11 @@ class Predictor:
         providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
                      if self.device.type == "cuda" else ["CPUExecutionProvider"])
         session = ort.InferenceSession(str(path), providers=providers)
+        sidecar = path.with_suffix(path.suffix + ".meta.json")
+        trained = None
+        if sidecar.exists():
+            trained = json.loads(sidecar.read_text(encoding="utf-8")).get("charset")
+        self._charsets[group.group_id] = _check_charset(trained, group, str(path))
         return session
 
     def model_for(self, group: GroupCfg):
@@ -165,7 +195,7 @@ class Predictor:
             name = session.get_inputs()[0].name
             log_probs = session.run(None, {name: image[None].astype(np.float32)})[0]
 
-        decoded = greedy_decode(log_probs, group.charset)[0]
+        decoded = greedy_decode(log_probs, self._charsets[group.group_id])[0]
         low = bool(fallback or decoded.confidence < LOW_CONFIDENCE)
         return Prediction(text=decoded.text, confidence=decoded.confidence,
                           min_char_prob=decoded.min_char_prob, group_id=group.group_id,

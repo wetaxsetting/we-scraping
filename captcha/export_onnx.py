@@ -26,6 +26,7 @@ import torch
 
 from .config import Config, GroupCfg, default_config_path, runs_dir
 from .model import CRNN
+from .predict import _check_charset
 from .utils import setup_logging
 
 log = logging.getLogger("captcha")
@@ -40,9 +41,7 @@ def load_model_for_group(cfg: Config, group: GroupCfg, run_dir: Path,
         raise FileNotFoundError(f"no checkpoint at {ckpt_path}; train the group first")
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     meta = ckpt["meta"]
-    if meta.get("charset") != group.charset:
-        raise ValueError(f"checkpoint charset {meta.get('charset')!r} != config "
-                         f"{group.charset!r}")
+    _check_charset(meta.get("charset"), group, str(ckpt_path))
     model = CRNN(num_classes=meta["num_classes"], in_channels=meta["in_channels"],
                  hidden=meta["hidden"], rnn_layers=meta["rnn_layers"],
                  input_height=meta["height"])
@@ -114,8 +113,8 @@ def export_group(cfg: Config, group: GroupCfg, run_dir: Path,
                 f"{diff:.3e} (> {PARITY_ATOL:.0e}); the exported graph produces "
                 f"different numbers than the model it came from")
 
-    payload = {"group_id": group.group_id, "charset": group.charset,
-               "num_classes": group.num_classes, "height": height, "width": width,
+    payload = {"group_id": group.group_id, "charset": meta["charset"],
+               "num_classes": int(meta["num_classes"]), "height": height, "width": width,
                "in_channels": int(meta["in_channels"]), "hidden": meta["hidden"],
                "rnn_layers": meta["rnn_layers"], "opset": opset, "dynamic": dynamic,
                "config_hash": cfg.hash_for(group),
