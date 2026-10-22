@@ -36,6 +36,12 @@ if ($Unregister) {
     return
 }
 
+# `powershell -File script.ps1 -Times 06:30,19:00` dua CA danh sach vao 1 chuoi (chi
+# `-Command` moi tach thanh mang), nen phai tu tach lai - neu khong New-ScheduledTaskTrigger
+# bao "String was not recognized as a valid DateTime".
+$Times = $Times | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } |
+         Where-Object { $_ }
+
 $root = Split-Path -Parent $PSScriptRoot
 $job = Join-Path $root "web\invoice_job.py"
 if (-not (Test-Path $job)) { throw "Khong thay $job" }
