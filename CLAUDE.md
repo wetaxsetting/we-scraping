@@ -67,6 +67,14 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
 - **Luôn ép đúng nhóm khi đọc (`enforce_group`).** Router chọn nhóm theo kích thước ảnh. Gặp captcha lạ
   trùng kích thước, nó vẫn đọc sai mà báo độ tin cao, không có cảnh báo. Nguồn captcha mới phải có nhóm
   riêng với khoảng 500–2.000 mẫu có nhãn.
+- **`Path(a) == Path(b)` trên Windows KHÔNG phân biệt hoa/thường.** `pathlib` so sánh case-insensitive
+  trên Windows, nên `Path('x_aB.png') == Path('x_Ab.png')` là `True`. Đổi nhãn captcha hầu hết là đổi
+  mỗi case, nên bất kỳ chỗ nào viết `if src == dst: return` sẽ **bỏ qua im lặng đúng những file cần
+  đổi** mà vẫn báo thành công (bug này làm `relabel_case` 20/10 báo "renamed 6411 files" trong khi
+  không file nào đổi). So bằng **chuỗi tên**: `src.name == dst.name`. Cùng họ với bẫy
+  `os.path.exists('FILE.png')` trả `True` khi đang có `file.png` (đã dính hồi sửa nhãn `g_70x23`).
+  **Kiểm rename phải đối chiếu `os.listdir` trước/sau, đừng tin log** — bài test "apply rồi undo thấy
+  tên khớp bản gốc" là vô nghĩa khi cả hai chiều đều không làm gì.
 - **Cache index không nhận ra file bị đổi tên.** Chữ ký cache chỉ gồm số file, tổng dung lượng và mtime mới
   nhất, nên sửa nhãn xong cache vẫn "hợp lệ". Số lượng tập train nghi ngờ → quét lại với cache trống.
 - **Checkpoint train trước 19/10 có thể ghi sai `meta.charset`** (đã sửa `train.py` 19/10): bản cũ lưu
@@ -78,8 +86,30 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
   `g_180x50_tax24` đã vá lại meta 19/10 (bản gốc giữ ở `runs/<nhóm>/*.pt.bak`).
   Gặp `evaluate` báo charset mismatch → kiểm `meta.note` trước, **đừng vội đổi config sang `fixed`**:
   làm vậy model nạp được nhưng đọc sai toàn bộ.
+- **`charset` trong config ≠ charset model được train** (sửa `predict.py` + `export_onnx.py` 20/10).
+  Với `charset_mode: core`, charset thật là phần lõi suy từ data, là **tập con** của charset config.
+  `train`/`evaluate` dùng bản suy ra, nhưng `predict`/`export_onnx` trước đây so khớp **cứng** với
+  `group.charset` → **từ chối nạp** mọi nhóm core có cắt đuôi (`g_200x70`, `g_180x50_tax24`,
+  `g_180x50_vn` đều không dùng thật được), và `predict` còn giải mã bằng charset config nên kể cả
+  qua được cũng lệch index. Nay `meta["charset"]` của checkpoint là bảng chữ giải mã chính thức;
+  config chỉ dùng để định tuyến + làm chặn trên (train ⊆ config, ngoài tập đó mới báo lỗi).
+  Sidecar `model.onnx.meta.json` cũng ghi charset đã train, không phải charset config.
+- **`captcha-botdetect-gen` bỏ qua `charset` trong preset** (phát hiện 20/10, chưa sửa).
+  `GroupPreset.Charset` chỉ được in ra ở lệnh `list`, **không bao giờ truyền vào BotDetect**
+  (`GenerateGroup` chỉ set `CodeLength`, `ImageStyle`, `ImageSize`, `ImageFormat`). Nên ảnh sinh ra
+  luôn dùng bảng chữ mặc định của BotDetect = **HOA + số**, bất kể preset ghi gì. Sinh cho nhóm
+  chữ thường / hỗn hợp hoa-thường là ra data sai hoàn toàn. Muốn đổi phải dùng
+  `CustomCharacterSetName` (BotDetect không có thuộc tính charset trực tiếp — soi bằng reflection:
+  `CodeStyle` chỉ có `Alphanumeric/Alpha/Numeric`, không có công tắc hoa/thường; `AutoUppercase`/
+  `AutoLowercase` là chuẩn hóa ô nhập, tức BotDetect vốn kiểm case-insensitive).
+  Exe trong `bin/` có thể cũ hơn `Program.cs` — build lại bằng MSBuild của VS 2022 trước khi dùng.
+- **Trước khi sinh data, kiểm nguồn data cũ của nhóm đó bằng vân tay PNG** (mode + chunks + cỡ file):
+  ảnh cào từ site, ảnh BotDetect và ảnh lưu lại qua PIL khác nhau rõ. Nhầm nguồn dẫn tới chẩn đoán sai
+  (xem `g_180x50_vn` ở 1.5).
 - Báo kết quả theo **test**, không theo val: hai số có thể lệch vài phần trăm. Bảng 1.4 là val_em
-  (từ history.csv); muốn số chính xác thì chạy evaluate trên tập test.
+  (từ history.csv); muốn số chính xác thì chạy evaluate trên tập test. **Test chỉ đáng tin khi nhãn
+  đúng** — nhãn tập test dính cùng lỗi với tập train thì số test vô nghĩa (`g_180x50_vn`: test 62,32%
+  nhưng thật ra 0/8 trên captcha thật). Nhóm nào lấy captcha được từ site thì đo thêm trên ảnh thật.
 - **Thời gian train** (đo từ history): `g_600x120` bản 17/10 ~39,6 giờ (54 epoch, 13.757 ảnh),
   `g_200x70` ~43,2 giờ (113 epoch), `g_180x50_vn` ~24,5 giờ (52 epoch), `g_180x50_tax24` ~3 giờ
   (53 epoch, 1.000 ảnh); `g_160x60` ~38 giờ, `g_120x40_vnpt` bản 14/10 ~30 giờ. Nhóm lớn nên train
@@ -127,10 +157,78 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
    khảo sát qua trang). Trùng cỡ với `g_180x50_tax24` nên phải giữ là nhóm riêng, adapter ép đúng tên
    nhóm. **Train 16/10 với 11.632 ảnh (52 lớp ký tự) chỉ ra 62,32% test, char 92,09%** — đã vượt xa
    ngưỡng ~250 mẫu/ký tự nên thiếu dữ liệu không còn là nguyên nhân. Lỗi còn lại là **nhầm hoa/thường**
-   (`B→b`…), tức giới hạn nằm ở chỗ 52 lớp có nhiều cặp gần như không phân biệt được ở 180x50.
-   Hướng tiếp: kiểm nhãn các cặp hoa/thường, hoặc bỏ phân biệt hoa/thường nếu site chấp nhận.
+   (`B→b`…): bỏ qua case thì EM đã là 97,89%, tức phần đọc chữ coi như xong.
+   **Nguyên nhân (đo 20/10): nhãn sai case, do công cụ gán nhãn tự động bỏ sót chữ hoa.**
+   Data KHÔNG phải BotDetect sinh ra mà là **captcha thật cào từ site rồi lưu lại bằng PIL**
+   (vân tay PNG: env = RGB `IHDR,IDAT,IEND` ~6 KB; tải thật = RGBA `IHDR,pHYs,...`; BotDetect =
+   `IHDR,sRGB,gAMA,pHYs,...` ~15 KB, nặng gấp đôi. Tên file có 3 lần `000001_` = gom nhiều đợt cào).
+   Thiên lệch rõ trong nhãn: 4.578 nhãn toàn chữ thường nhưng chỉ 45 nhãn toàn chữ hoa.
+   Case thành nhiễu không học được: `train_em=1.0` (thuộc lòng) mà val case vẫn sai.
+   **`62,32%` test là số ảo** — tập test dính đúng thiên lệch nhãn của tập train. Đo trên 8 captcha
+   thật tải từ site 20/10: **0/8 đúng cả chuỗi, nhưng 48/48 mặt chữ đúng**, mọi lỗi đều một chiều
+   hoa→thường (`N2HteL→N2hteL`, `kbU2nz→kbu2nz`, `sF3ArQ→sf3arq`). Nhóm này thực tế **chưa dùng được**.
+   Muốn sửa phải gán lại nhãn (không có đường tắt từ bộ sinh, vì data là ảnh thật).
+   **`captcha/case_from_geometry.py` (viết 20/10) gán case bằng hình học**, không dùng OCR:
+   mặt chữ lấy từ CRNN (đo trên 40 captcha thật: **sai 0/40**), case suy từ hình dạng glyph.
+   Đo trên 40 ảnh thật tự đọc tay: exact **18% (chỉ model) → 48% (thêm hình học)**; theo nhóm ký tự:
+   x-height `acemnorsuvwxz` **97,7%**, chữ số 100%, thò xuống `gjpqy` 74,5%, nét trên `bdfhklt` 75,8%.
+   - **Mốc chiều cao phải lấy từ glyph cao-bất-kể-case** (chữ số + `bdfhklt` + `gjpqy`), không lấy
+     thống kê trên *mọi* glyph: trung vị rơi giữa 2 cụm khi nửa số glyph thấp, phân vị 75 rơi hẳn vào
+     cụm thấp khi 5/6 glyph thấp (`vEneaa` ra `VENEAA`). Ảnh toàn chữ x-height thì không có mốc nào →
+     dùng ngưỡng **tuyệt đối 18px** (đo 40 ảnh: chữ thường 13–21px, chữ hoa 19–28px → cũng 97,7%).
+   - **5 cặp tách được bằng hình dạng mực** (`CASE_RULES`): `b`/`d` chữ thường chỉ có **nét sổ mảnh**
+     ở dải 28% trên (0,20–0,31 vs hoa 0,54–0,65), `q` tương tự ở dải dưới; `G` là **vòng hở** nên mật
+     độ mực thấp (0,30–0,41) còn `g` là bụng đặc (0,45–0,54); `y` có đuôi nên hộp rỗng hơn `Y`.
+   - **Mỗi luật phải tự chứng minh bằng cách thắng chính cái nhãn nó ghi đè, kiểm bằng mắt trên ảnh
+     TRAIN** — không phải trên ảnh dùng để fit. Đạt: `b/d/q` 10/10, `g` 11/12, `y` 8/9.
+     **Đã loại vì trượt bài kiểm đó:** `f` 2/5, `h` 2/3, `j` 1/6, `t` 1/2 — dù chúng đo được 88–97%
+     trên glyph cắt từ captcha mới tải. **Lý do sai: tập để fit đã bị lọc bỏ các bbox dính nhau/cụt
+     cho dễ đọc, tức là nửa dễ của dữ liệu, nên ngưỡng rơi vào giữa vùng chồng lấn thật.** `K/k` không
+     bao giờ tách (76%). `P/p` thì không thể: cùng hình dạng (nét sổ + bụng), chỉ khác vị trí so với
+     đường cơ sở mà cách này không thấy được.
+   - **Bảng chữ THẬT của site là 56 ký tự**: `23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz`
+     — không có `0 1 o O l I` (generator bỏ hết ký tự dễ nhầm; đo trên 40 ảnh đọc tay + 150 ảnh +
+     12 glyph `l` cắt ra đều là `L` + 10 nhãn chứa `l` đều là `L`). `FIXED_CASE` trong
+     `case_from_geometry.py` ép thẳng `l→L`, `I→i`, không cần đo gì.
+     **Việc này quan trọng hơn vẻ ngoài:** ddddocr ghi 315 chữ `L` thành `l`, mà `l` rơi ngay dưới
+     ngưỡng tần suất → `core` **vứt luôn ~300 ảnh đó khỏi tập train**. Sửa xong chỉ còn bỏ 5 ảnh.
+   - **Charset đổi sau khi sửa nhãn — phải cập nhật config.** Charset suy ra đi từ 52 → **56 ký tự**,
+     thêm đúng `A V W Y`: bốn chữ này trước bị ddddocr hạ thành chữ thường gần như mọi lúc nên tần
+     suất dạng hoa rơi dưới ngưỡng và không thành lớp. Config cũ khai 59 ký tự (thừa `0 I l`) đã sửa
+     về đúng 56. **Checkpoint cũ (52 ký tự) không nạp được nữa** — phải train lại.
+   - **Không đoán case cho các cặp còn lại.** Độ thò xuống không đo được: glyph đầu/cuối nằm ngoài
+     vùng có điểm neo, ngoại suy sóng sai vài px trong khi độ thò chỉ vài px. Đoán bằng độ tụt đỉnh so
+     hàng xóm chỉ được 74,5% — nghe thì hơn, nhưng khi **gán lại nhãn** thì mốc so sánh là nhãn ddddocr
+     (ở nhóm này thường đã đúng), nên ghi đè là lỗ: thử 10 ảnh thật, bật đoán thì 13 lỗi→13, tắt đi còn
+     13→3. **Bài học: "tốt hơn trên tập validation" không suy ra "tốt hơn khi gán lại nhãn"** — validation
+     so với dự đoán của model (thiên lệch), gán nhãn so với nhãn ddddocr (thường đúng ở nhóm này).
+   - Glyph thấp hơn 50% glyph cao nhất trong ảnh = **phân đoạn hỏng** (bắt được mảnh vụn), bỏ qua chứ
+     đừng đo — chính nó tạo ra ngoại lệ `b` 0,61 làm tưởng `B/b` không tách được.
+   `captcha/relabel_case.py` đổi tên file theo kết quả trên (mặt chữ lấy từ tên file cũ — model đã
+   thuộc lòng tập này nên cho kết quả y hệt mà chậm hơn). Mặc định dry-run, có `--apply` và `--undo`,
+   **tự xóa `env/.cache`** (chữ ký cache không đổi khi rename, xem 1.3). Chạy thật 20/10, **3 lượt**:
+   lượt 1 (x-height) đổi 6.410 ảnh; lượt 2 (`b/d/q`) đổi 1.601 (`d→D` 684, `b→B` 571, `q→Q` 471);
+   lượt 3 (`g/y`) đổi 1.223 (`y→Y` 789, `g→G` 388, và ngược lại `G→g` 62, `Y→y` 52).
+   Còn **17.450 vị trí** `fhklt`/`jp` giữ nguyên nhãn ddddocr. Nhãn toàn chữ thường giảm 4.578 → ~1.4k.
+   Trên 40 ảnh thật tự đọc tay, exact đi từ 18% (chỉ model) lên **52%**.
+   **Nhật ký lượt 1 đã mất nên không lùi về nhãn ddddocr gốc được nữa**; ảnh chụp danh sách tên ở
+   `env/g_180x50_vn/filenames_snapshot_20261020.txt`, nhật ký lượt 2 ở `relabel_case_pass2.csv`.
+   Lần sau chạy nhiều lượt thì đổi tên `relabel_case.csv` giữa các lượt, vì lượt sau ghi đè lượt trước.
+   Sau đó vẫn còn nhiễu ở nhóm nét trên/thò xuống → muốn sạch hẳn phải gán tay, nhưng không cần cả
+   11.632 ảnh: nhiễu nhãn mới là giới hạn chứ không phải thiếu data — 3.000 ảnh sạch đã là ~346
+   mẫu/ký tự, vượt ngưỡng 250 ở 1.3.
+   **KHÔNG được fold case:** đã thử thật trên site 20/10 — gõ captcha đảo case bị trả
+   "Mã xác thực không đúng" y như gõ bậy, còn gõ đúng case thì qua được sang bước tra dữ liệu.
+   Server phân biệt hoa/thường, client không chuẩn hóa (`text-transform: none`, bundle không có
+   `toUpperCase/toLowerCase` trên captcha). Fold case chỉ cho ra model không bao giờ qua được site.
    **Chưa có HĐ thật nào dùng cổng này** (kiểm DB 20/10: 0 dòng với nbmst 0101352495/0103018807) nên
    chưa cấp thiết; giữ lại phòng khi phát sinh HĐ từ 1 trong 2 MST đó.
+   Khảo sát cổng 20/10 (để dành khi viết adapter): captcha lấy ở
+   `GET https://gateway.v50.vninvoice.vn/api/portal/PortalApiService/captcha` → `{image: data-URI PNG 180x50, key}`;
+   tra cứu `POST .../portal-public` với `{transactionId, captcha, secret: key, taxCode, fromDate, toDate}`.
+   **Không có reCAPTCHA** (không `grecaptcha`/sitekey/iframe — nút "reCaptcha" trên trang chỉ là nút đổi ảnh).
+   Lỗi trả về phân biệt rõ: captcha sai → "Mã xác thực không đúng"; captcha đúng nhưng không có dữ liệu →
+   "Mã số thuế người bán … không tìm thấy". Mã xác thực dài đúng 6 ký tự (`maxlength=6`).
 4. **VNISC thật — MSTTCGP 0102331762** (`invoice.abcsys.vn`, mã `MTCuu`): có **3 HĐ thật** (Bảo Gia
    Trần C26TBV-238805; Dặm Vàng C26TSS-1198, C26TSS-981) nhưng **chưa có model captcha nào** cho đúng
    site này — trước đây nhầm gán `g_180x50_vnisc` (nay là mục 3, thuộc vninvoice.vn, khác site). User
@@ -374,10 +472,40 @@ dò cột theo tên header): với 117 NCC có link, ghi form tra cứu mặc đ
 Chỉ đọc form, không gửi tra cứu thử → captcha chỉ hiện sau khi bấm tìm có thể bị sót.
 Kết quả: 107 OK; 49 site chỉ cần mã tra cứu, 27 có captcha ảnh, 13 captcha dạng tích.
 
-## 2.9 Việc còn mở
+## 2.9 Dựng trên máy chủ mới
+
+Thứ tự đúng (mỗi bước đều kiểm được, đừng bỏ bước kiểm):
+
+1. **Cài Git LFS TRƯỚC khi clone** (`git lfs install`). Clone trước rồi mới cài thì `runs/*/best.pt`
+   chỉ là file trỏ vài trăm byte — nạp lên sẽ lỗi khó hiểu chứ không báo thiếu file.
+   Kiểm: `git lfs ls-files` phải ra **5 file** (`g_600x120`, `g_150x34`, `g_80x30`, `g_1500x350`,
+   `g_200x70/h32_89pct`) và mỗi `best.pt` phải ~25 MB.
+2. Python 3.13 + `pip install -r requirements.txt -r requirements-invoice.txt` + `playwright install chromium`
+   (bắt buộc: adapter VNPT dựng PDF từ HTML).
+3. **`py -X utf8 scripts\check_setup.py`** (viết 21/10) kiểm hết trong 1 lần: Python, 13 thư viện,
+   4 model production còn nguyên hay chỉ là con trỏ LFS, nạp model thật, Playwright chromium,
+   `.env` có đủ khóa chưa (**chỉ báo có/không, không in giá trị**), và kết nối PostgreSQL.
+   Thoát mã 1 nếu còn lỗi. Chạy trước `init-db`.
+   4 model job cần: `g_600x120` (đăng nhập GDT), `g_150x34` (easyinvoice), `g_80x30` (vnpt),
+   `g_1500x350` (visnam). Adapter mới dùng nhóm khác thì phải thêm `!runs/<nhóm>/` vào `.gitignore`
+   **và thêm vào `PROD_MODELS` trong script**, nếu không repo không mang model đó theo.
+4. `.env` copy từ `.env.example`, điền `DATABASE_URL`, `HDT_PASSWORD_<MST>`, phần `INVOICE_MAIL_*`.
+   **Không có trong repo**, phải tạo tay trên từng máy.
+5. `init-db` → `add-company --mst ... --username ...` → chạy thử `status` (không đụng GDT) rồi
+   `xml --limit 5`.
+6. Lịch chạy: `scripts\register_invoice_tasks.ps1`. **Trên máy chủ bắt buộc thêm `-RunWhenLoggedOff`**
+   (thêm 21/10) — mặc định task đăng ký kiểu Interactive, tức **chỉ chạy khi user đang đăng nhập**,
+   nên trên server không ai ngồi thì job im lặng không chạy. Cờ này dùng `LogonType S4U` (chạy cả khi
+   đã đăng xuất, không phải lưu mật khẩu).
+
+Thứ **không** có trong repo và không cần cho job: `env/` (dữ liệu train), `env_pass/`, `output/`,
+`example/`. Job chỉ cần `configs/groups.yaml` + `runs/<nhóm>/best.pt`.
+Nhớ **cửa sổ mail 7 ngày** (mục 2.7): lịch 3 lần/ngày là dư, nhưng nếu server tắt quá 1 tuần thì
+mail trong khoảng đó mất luôn — tăng `INVOICE_MAIL_DAYS` nếu dự kiến gián đoạn dài.
+
+## 2.10 Việc còn mở
 
 - Lấy thêm HĐ cũ (tháng 7–8) bằng `main_auto.py` để có dữ liệu thật làm adapter NCC mới.
-- Setup 1 server local chạy thử nghiệm job định kỳ.
 - Test DB (`tests/test_invoice_store.py`) chưa chạy trên DB thật.
 
 <!-- Bổ sung thêm bên dưới -->
