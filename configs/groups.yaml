@@ -247,7 +247,7 @@ groups:
   sizes:
   - - 180
     - 50
-  charset: 023456789ABCDEFGHIJKLMNPQRSTUVWXYZabcdefghijklmnpqrstuvwxyz
+  charset: 23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz
   charset_mode: core
   min_freq: 0.005
   review: false
@@ -256,10 +256,13 @@ groups:
   in_channels: 1
   clahe: false
   clip_above: null
-  note: (180, 50) mixed case, red text dotted bg, len=5-6, n=1927, charset=60 (core sẽ drop
-    tail _/I/0/W/l) — nền tảng vninvoice.vn (tracuu.v50.vninvoice.vn; VN-Invoice MST 0101352495
-    / "VNISC" dòng 46 Excel MST 0103018807), KHÔNG phải invoice.abcsys.vn/MSTTCGP 0102331762
-    (nhầm trước đây); renamed g_180x50_mixed → g_180x50_vnisc 15/10 → g_180x50_vn 20/10
+  note: (180, 50) chữ đỏ nền chấm, hoa/thường lẫn lộn, len=5-6, n=11631. Charset 56
+    là bảng chữ THẬT của site (đo 20/10)— không có 0 1 o O l I, generator bỏ hết ký
+    tự dễ nhầm. Nhãn đã sửa case bằng captcha/relabel_case.py (4 lượt, 20/10) nên core
+    suy ra đúng 56 ký tự này và chỉ bỏ 5 ảnh (trước bỏ ~300 vì ddddocr ghi L thành l).
+    Nền tảng vninvoice.vn (tracuu.v50.vninvoice.vn; VN-Invoice MST 0101352495 / "VNISC"
+    dòng 46 Excel MST 0103018807), KHÔNG phải invoice.abcsys.vn/MSTTCGP 0102331762
+    (nhầm trước đây); đổi tên g_180x50_mixed → g_180x50_vnisc 15/10 → g_180x50_vn 20/10
 - group_id: g_180x50_tax24
   sizes:
   - - 180

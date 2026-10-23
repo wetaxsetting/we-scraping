@@ -29,7 +29,7 @@ namespace BotDetectGen
             ["g_150x39"]   = new GroupPreset(150,  39,  "0123456789abcdefghijklmnopqrstuvwxyz",              3, 4),
             ["g_160x60"]   = new GroupPreset(160,  60,  "2345678abcdefgmnpwxy",                              4, 4),
             ["g_160x75"]   = new GroupPreset(160,  75,  "0123456789abcdefghijklmnopqrstuvwxyz",              5, 6),
-            ["g_180x50_vnisc"] = new GroupPreset(180, 50, "023456789ABCDEFGHIJKLMNPQRSTUVWXYZabcdefghijklmnpqrstuvwxyz", 5, 6),
+            ["g_180x50_vn"] = new GroupPreset(180, 50, "023456789ABCDEFGHIJKLMNPQRSTUVWXYZabcdefghijklmnpqrstuvwxyz", 5, 6),
             ["g_180x50_tax24"] = new GroupPreset(180, 50, "02345678CKXZabcdefghkmnopqrwxy",                  5, 6),
             ["g_180x64"]   = new GroupPreset(180,  64,  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",              5, 5),
             ["g_194x35"]   = new GroupPreset(194,  35,  "0123456789",                                        4, 7),
