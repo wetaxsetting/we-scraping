@@ -20,6 +20,16 @@ Tra bằng MTC trên /TCHD (có reCAPTCHA ẩn) hay upload XML lấy từ cổng
 không đúng cấu trúc hoặc đã bị sửa") đều không dùng được.
 
 Khảo sát 10/2026: kiểu (a) C26TGN-609/610, C26MBB-17535972; kiểu (b) C26TAH-256, C26MDB-878.
+
+Link trong mail (23/10/2026, ~400 mail BKAV gửi người mua, hầu hết KHÔNG kèm file):
+  tracuu.ehoadon.vn/<MTC> (hoặc <khách>.ehoadon.vn/<MTC>, vd pizzahut) — MTC 11 ký tự chữ hoa/số,
+  cũng có trong tiêu đề "Hóa đơn số 00000020 - MTC: S9HV4YIT3F7 của <người mua> tại <người bán>".
+  Link đó chuyển về tchd.ehoadon.vn/TCHD?MTC=<MTC>; trang này GET thẳng (chưa bấm "Tra cứu") đã
+  có sẵn ViewInvoice('<InvoiceGUID>') — không cần gửi form nên không đụng reCAPTCHA (khối
+  reCAPTCHA trên trang để ẩn). Sai mã → bkav_alert_error('Mã tra cứu Hóa đơn … không đúng').
+  Có GUID rồi thì tải như trên. Link van.ehoadon.vn/Lookup?InvoiceGUID=… dùng thẳng GUID.
+  Các link còn lại không có khóa HĐ → bỏ: phaplyhd.ehoadon.vn/ (trang chủ), ehoadon.vn/hdpb6a
+  (link rút gọn chung), van|tchd.ehoadon.vn/Login?AGUID=…&BTaxCode=… (đăng nhập tài khoản người mua).
 """
 from __future__ import annotations
 
@@ -28,9 +38,10 @@ import re
 
 from . import register
 from .base import PdfAdapter, PdfFetchError
-from .common import check_pdf_is_invoice, is_pdf, new_session, request
+from .common import check_pdf_is_invoice, is_pdf, link_params, new_session, request
 
 BASE = "https://van.ehoadon.vn"
+TCHD = "https://tchd.ehoadon.vn/TCHD"
 POSTBACK_PDF = "lbtDownloadAsPdf"
 
 _GUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -38,8 +49,10 @@ _DOWNLOAD_RE = re.compile(r"DownloadFile\(&#39;([^&']+\.pdf)&#39;,\s*(\d+)\)", r
 _POSTBACK_RE = re.compile(r"__doPostBack\(&#39;" + POSTBACK_PDF + r"&#39;")
 _ALERT_RE = re.compile(r"bkav_alert_\w+\('([^']*)'")
 _INPUT_RE = re.compile(r"<input[^>]*>", re.I)
+_MTC_RE = re.compile(r"^[0-9A-Z]{8,20}$")              # mã tra cứu BKAV (thực tế 11 ký tự)
+_VIEW_RE = re.compile(r"ViewInvoice\('([0-9a-fA-F-]{36})'\)")
 
-_MSG_NOT_FOUND = ("không tồn tại", "không hợp lệ", "không tìm thấy")
+_MSG_NOT_FOUND = ("không tồn tại", "không hợp lệ", "không tìm thấy", "không đúng")
 
 
 def _form_fields(page: str) -> dict:
@@ -59,6 +72,53 @@ class BkavAdapter(PdfAdapter):
     source_id = "bkav"
     name = "BKAV eHoadon"
     mst_tcgp = ("0101360697",)
+    hosts = ("ehoadon.vn",)
+
+    def invoice_from_link(self, url: str, code, mail_text: str):
+        """
+        Mail BKAV: khóa HĐ chỉ lấy từ chính link — <x>.ehoadon.vn/<MTC>, /TCHD?MTC=<MTC> hoặc
+        /Lookup?InvoiceGUID=<guid>. Không mở link. Mỗi mail có 4 link (trang chủ, link rút gọn,
+        đăng nhập, tra cứu) nên link không mang khóa trả None, kể cả khi tiêu đề có MTC — để mỗi mail
+        chỉ tra 1 lần. Số HĐ lấy từ tiêu đề (khi MTC trong tiêu đề khớp link) để kiểm PDF.
+        """
+        from urllib.parse import urlsplit
+        p = link_params(url)
+        guid = p.get("invoiceguid", "")
+        if _GUID_RE.match(guid):
+            return {"dlhdon_id": guid, "tt_khac": {}}
+        u = urlsplit(url.strip())
+        path = u.path.strip("/")
+        mtc = (p.get("mtc") if path.lower() == "tchd" else path if "/" not in path else "") or ""
+        if not mtc and not path and u.hostname in ("tracuu.ehoadon.vn", "tchd.ehoadon.vn"):
+            mtc = code or ""                          # trang tra cứu trống + mã ghi riêng trong mail
+        mtc = mtc.strip()
+        if not _MTC_RE.match(mtc):                    # 'hdpb6a', 'Login', trang chủ ...
+            return None
+        inv = {"ma_tra_cuu": mtc, "tt_khac": {"MTC": mtc}}
+        m = re.search(r"số\s*0*(\d+)\s*-\s*MTC\s*:\s*" + re.escape(mtc), mail_text or "", re.I)
+        if m:
+            inv["shdon"] = int(m.group(1))
+        return inv
+
+    @staticmethod
+    def lookup_code(invoice: dict) -> str:
+        tt_khac = invoice.get("tt_khac") or {}
+        return str(tt_khac.get("MTC") or invoice.get("ma_tra_cuu") or "").strip().upper()
+
+    @staticmethod
+    def guid_from_mtc(s, mtc: str) -> str:
+        """Trang tchd.ehoadon.vn/TCHD?MTC=<mã> (GET, không gửi form) có sẵn ViewInvoice('<GUID>')."""
+        r = request(s, "GET", TCHD, params={"MTC": mtc}, headers={"Referer": TCHD})
+        if r.status_code != 200:
+            raise PdfFetchError(f"BKAV tra MTC trả HTTP {r.status_code}", "other")
+        if m := _VIEW_RE.search(r.text):
+            return m.group(1)
+        alert = html.unescape(a.group(1)) if (a := _ALERT_RE.search(r.text)) else ""
+        alert = re.sub(r"<[^>]+>", "", alert.split("[!|")[0]).strip()
+        if not alert or any(k in alert.lower() for k in _MSG_NOT_FOUND):
+            raise PdfFetchError(f"BKAV không tìm thấy HĐ theo MTC {mtc}: {alert[:150] or 'trang không có HĐ'}",
+                                "no_pdf")
+        raise PdfFetchError(f"BKAV tra MTC: {alert[:200]}", "other")
 
     @staticmethod
     def invoice_guid(invoice: dict) -> str:
@@ -71,9 +131,12 @@ class BkavAdapter(PdfAdapter):
 
     def fetch_pdf(self, invoice: dict) -> bytes:
         guid = self.invoice_guid(invoice)
-        if not guid:
+        mtc = self.lookup_code(invoice)
+        if not guid and not _MTC_RE.match(mtc):
             raise PdfFetchError("XML không có InvoiceGUID BKAV (DLHDon/@Id dạng GUID)", "no_code")
         s = new_session()
+        if not guid:                                             # HĐ dựng từ link mail: chỉ có MTC
+            guid = self.guid_from_mtc(s, mtc)
         lookup = f"{BASE}/Lookup"
         r = request(s, "GET", lookup, params={"InvoiceGUID": guid, "ViewATF": ""},
                     headers={"Referer": f"{BASE}/TCHD"})

@@ -423,6 +423,36 @@ Các adapter dưới đây đã thử thật trên XML thật (10/2026):
 | `minvoice`       | M-INVOICE   | 0106026495 (+ -001)    | "Số bảo mật" / "Mã tra cứu" + MST bán            | không                                                                                                                                                                                                                                              |
 | `myinvoice`      | My Software | 0108971656             | MCCQT                                            | không                                                                                                                                                                                                                                              |
 | `visnam`         | Visnam      | 0401486901             | `QuanLy_SoBaoMat`                                | `g_1500x350`                                                                                                                                                                                                                                       |
+| `thaco`          | THACO (cổng riêng tập đoàn Trường Hải) | 3600252847 | TTKhac `DownloadPdf` (`getinvoice?token=` base64 mẫu_ký hiệu_số\|MST bán; phần mẫu nội bộ không suy được nên chỉ dùng link có sẵn) | không. Trả ZIP chứa PDF; không có `DownloadPdf` → `no_code` (form tra có captcha giống `g_194x35`, chưa làm). Thật 4/4 (23/10) |
+| `vinhhy`         | Vĩnh Hy (ehoadondientu.com) | 0314743623 | `DLHDon/@Id` 24 số = DB 14 số + bản ghi 10 số → `GenerateFile.aspx?r=ct_<14>_<10>&type=pdf`; mã mail 10–11 ký tự qua `Tracuu.aspx/tracuu` | không. Có `fetch_xml` (XML có chữ ký). Thật 3/3 (23/10) |
+| `minhkhang`      | Minh Khang Group (hoadondientuvat.com) | 0314209362 | như `vinhhy` (cùng phần mềm, khác host/DB) | không. Thật 1/1 (23/10) |
+| `xcyber`         | CyberLotus (xcyber/cyberbill) | 0105232093 | TTKhac `MaTraCuu` (12/15 ký tự) | `g_300x75` (server có kiểm; 38/38 câu trả lời được nhận). 2 hệ thống: bill2app trước, không thấy thì bill1app. Thật 1/3 — 2 HĐ 2023 hệ thống 1 báo "Lỗi phát sinh" (lỗi phía NCC, để `server` thử lại) |
+
+| `thaison`        | Thái Sơn (einvoice.vn, einvoice.mmvietnam.com) | 0101300842 | TTKhac "Mã TC"; cổng theo TTKhac "DC TC"/`lookup_url`, không có thì `SELLER_PORTALS` (MM, Jollibee, Kiến An), rồi cổng chung einvoice.vn | `g_200x70` (server có kiểm, 19/22 = 86%); cần header `Referer` không thì ra ảnh lỗi. **Lấy được đa số người bán — riêng Grab không lấy được (lấy qua mail).** Thật 14/14. Cổng riêng thêm 23/10 (host lấy từ dòng "tra cứu tại (Tracking)" in trên PDF): Cổng Vàng `vat.ggg.com.vn` (`g_200x70`, 3/3), KFC `invoice.kfcvietnam.com.vn` (bỏ `www.`, 2/2) và Zalo `invoice.zaloplatforms.vn` (2/2) dùng `/Captcha` 200x60 6 ký tự **phân biệt hoa/thường** → ddddocr + sửa case theo hình dạng (`solve_img_captcha`, server nhận 44/51), Diệu Phúc/CellphoneS `hddt.cellphones.com.vn` (captcha sinh bằng JS, server không kiểm, 2/2). Grab 0312650437 → `no_portal` ngay: HĐ 2025 có trên cổng HILO nhưng tải trả 400, HĐ 2023–24 không cổng nào có |
+| `fast`           | FAST (einvoice.fast.com.vn) | 0100727825 | TTKhac `KeySearch` (base64 vào `p`) + `n`=số HĐ | bước tải PDF (`t=4`) **không kiểm captcha** (chỉ bước xem `t=2` kiểm). Thật 6/6 |
+| `vnisc`          | VNISC (invoice.abcsys.vn) | 0102331762 | TTKhac `MTCuu` | ảnh 100x46, 6 chữ số → **ddddocr** 20/20 (không cần model). Thật 10/10 |
+| `smartsign`      | VI NA / SmartSign (tracuuhd.smartsign.com.vn) | 0309612872 | TTKhac `Matracuu` | ảnh 150x39 phân biệt hoa/thường → ddddocr sau khi lọc sọc đỏ 54/60. Thật 4/4; người bán 0304892753 (2024) ghi `Matracuu` trong XML khác mã in trên PDF → `no_pdf`; HĐ 2023 không có TTKhac → `no_code` |
+| `pavietnam`      | P.A Việt Nam (hoadon.pavietnam.vn, **không phải** tracuu.hoadon30s.vn) | 0302431595 | mã 13–14 chữ hoa **chỉ có trên PDF/mail**, XML không có → HĐ chỉ có XML ra `no_code` | ddddocr 40/40 sau xử lý ảnh; tường lửa SafeLine chặn `new_session` (cipher cũ) nên dùng session `requests` mặc định. Thật 7/7 bằng mã từ mail |
+
+| `express247`     | 247Express / CTCP Hai Bốn Bảy (người bán 0304043037, cổng riêng hoadon.247express.vn) | — (HĐ hthdon=2, không có XML) | mã 24 ký tự **chỉ từ link mail** → `GET /service/api/Invoice/DownloadFilePDF/<mã>` | không (form tra trên web có reCAPTCHA nên không dùng, không lấy XML). Thật 8/8 (23/10), khớp HĐ qua `_match_pdf_text` |
+
+**Cổng riêng người bán thêm 23/10** (tìm từ dòng "Tra cứu hóa đơn tại website" in trên PDF trong mail):
+- VNPT `-tt78` (luồng tt78 + `g_80x30`; đọc captcha độ tin thấp thì xin ảnh mới thay vì gửi bừa): Golf Long Thành
+  3600718503 (TTKhac `Extra`, thiếu thì MCCQT, 6/6), SW F&B CN2 0313894637-002 (MCCQT, 6/6), Navigos 0304836029
+  (MCCQT, 1/1). Rule trong `SELLER_PORTALS` có `keys` = lấy mã tra từ trường nào. `seller_rule()`: khớp MST đúng →
+  MST công ty mẹ → tên; nhờ đó Xăng dầu Sài Gòn 0300555450-001 vào cổng Petrolimex (2/2).
+- HILO Kim Đại Phát 3603526528 (`tracuuhddt78.hilo.com.vn`, 3/3): form tra có reCAPTCHA v3 nên không dùng; tải qua
+  `/Invoice/getinvoice?token=base64(mẫu:ký hiệu:số:MST bán)` — đúng link HILO gửi trong mail. Với người bán trong
+  `LEGACY_SELLERS` adapter **tự dựng token từ XML** (chờ user xác nhận có giữ không; bỏ thì chỉ còn đường link mail).
+  `tt78hd.hilo.com.vn` dùng token kiểu khác (`1_C23TIH_927|MST`), chưa làm.
+
+`pdf_providers/ocr_ddddocr.py`: nạp ddddocr dùng chung (ddddocr 1.6 `set_ranges` làm hỏng kết quả → mỗi adapter tự lọc ký tự).
+Kiểm chứng 23/10 đều bằng HĐ thật của công ty; PDF lấy được trùng nội dung với PDF đã có từ mail.
+
+**HĐ máy tính tiền không có MSTTCGP trong XML** (23/10, `invoice_job.pick_adapter`): chọn adapter theo host link
+tra cứu trong XML (`lookup_url` / TTKhac `PortalLink`), không có thì theo **NCC quen của người bán** (MSTTCGP hay gặp nhất
+trên HĐ khác của họ, `store.seller_mst_tcgp`). `_prepare_queues` tự đưa các HĐ `no_source` thiếu MSTTCGP đã định tuyến
+được về hàng đợi. Trước đó 294 HĐ MTT của Grab nằm chờ vô lý (adapter `hilo` lấy được, thử thật 2/2).
 
 **Kiểm trên DB 22/10** (PDF đã lưu, đều qua `check_pdf_is_invoice`): chạy chắc trên **toàn nền tảng**
 (nhiều người bán khác nhau): MISA 39 PDF/15 người bán, BKAV 35/11, Viettel 23/6, EasyInvoice 7/6,
@@ -449,19 +479,34 @@ Quy tắc khi viết adapter:
 
 **Chưa làm được** (khi bổ sung thì cập nhật bảng trên):
 
-- FAST 0100727825: cổng chạy được, cần nhóm captcha mới khoảng `g_100x30` (PHẦN 1, mục 1.5).
-- VNISC 0102331762 (invoice.abcsys.vn, mã `MTCuu`, 3 HĐ thật): cổng chạy được nhưng **chưa có model
-  captcha nào đúng cho site này** — `g_180x50_vn` (từng gọi nhầm `g_180x50_vnisc`) thực ra là của
-  nền tảng vninvoice.vn, khác site (xem 1.5 mục 3/4). Cần tự tra tay xác nhận lại captcha thật của
-  invoice.abcsys.vn rồi mới thu thập mẫu train.
-- Thái Sơn 0101300842 (einvoice.vn, cổng riêng của MM Mega): luồng tra đã kiểm; `g_200x70` đã train
-  xong 17/10 (test 89,24%) nên **viết adapter được rồi**. Định tuyến theo TTKhac `DC TC`.
-- ASIA 0101162173: XML không có FKey.
+- ASIA 0101162173 (asiainvoice.vn/tra-cuu): captcha 150x30 đọc được bằng ddddocr + `.upper()` (22/30 qua),
+  nhưng tra bằng **FKey** chỉ có trong mail ASIA gửi; XML Thuế không có (thử MCCQT: không ra). Viết adapter khi có mail ASIA.
+- **HT, EFY, FPT — tra cứu NCC bị chặn bởi reCAPTCHA, phải lấy PDF qua phương thức khác (mail).**
+  Kiểm 23/10 (gửi tra cứu bằng mã thật, để trống token, 2–3 lần/cổng): server cả 3 đều kiểm token thật.
+
+  | NCC | MSTTCGP | Cổng tra cứu | reCAPTCHA | Server trả khi thiếu token |
+  | --- | --- | --- | --- | --- |
+  | HT | 0315638251 | laphoadon.htinvoice.vn (`POST /TraCuu/TimTheoMaTraCuu`) | v2 | `"Xác thực không thành công. Recaptcha"` |
+  | EFY | 0102519041 | ihoadon.vn/kiem-tra (`POST /kiem-tra/check`) | v2 Enterprise | `VE001 "Mã xác minh không đúng"` (mã bịa cũng vậy → chặn trước khi tra) |
+  | FPT | 0104128565 | tracuuhoadon.fpt.com.vn (`GET /api/search?...&token=`) | v3 | HTTP 500 `invalid-input-response` (server gọi siteverify của Google) |
+
+  **Không viết adapter, không vượt reCAPTCHA** (không giải tự động, không CapSolver/Anti-reCaptcha/Botasaurus,
+  không gọi `api2/reload` lấy token, không dùng trình duyệt tự động). PDF lấy qua: (1) mail — XML/PDF đính kèm
+  (mục 2.7); (2) người tự tra trên trình duyệt rồi nạp PDF vào (đang đề xuất lệnh `import-pdf`); (3) xin NCC
+  kênh chính thức (API / tài khoản khách hàng) nếu số HĐ lớn.
+- TS24 0309478306 (tracuu.xuathoadon.vn, Cloudflare Turnstile): cùng lý do — lấy qua mail.
+- **Khảo sát 23/10, không làm:** MobiFone 0100686209 (+ -002, 61 HĐ hthdon=2): cổng `tracuuhoadonvienthong.mobifone.vn`
+  không captcha, tra bằng "số bảo mật" (`/Tracuu/PrintInvoicePdf?sobaomat=`), nhưng không HĐ nào của mình có mã này
+  (GDT chỉ có `mkhang`) và mail cước 2026 không về hộp einvoice@ → cần MobiFone gửi mail thông báo HĐ.
+  EVN HCMC Thủ Đức 0300951119-011 (10 HĐ): HĐ tiền điện ở `cskh.evnhcmc.vn` phải đăng nhập tài khoản khách hàng
+  (mã PE12000248547); không có mail EVN. equanlyhoadon.vn (~300 link) = trang quảng cáo của BKAV, không có mã
+  (mã MTC nằm ở link `tracuu.ehoadon.vn` cùng mail, đã xử lý bằng `bkav`). M-Invoice: xem đoạn "Link trong mail".
+  (FAST, VNISC, Thái Sơn, VI NA, PA Việt Nam: đã làm 23/10, xem bảng trên.)
 - WEBCASH/wetax 1201496252 (HĐ bán ra của chính công ty): cổng chỉ tra bằng mã riêng, mã này không có trong XML.
 - HILO GSM (cổng chung dùng reCAPTCHA, tra không ra) và VETC phí đỗ xe 0106858609 (chỉ xem
   được trong app): cả hai nằm chờ ở `no_portal`. PDF của GSM đã lấy được qua mail.
-- CMC Telecom (cinvoice.cmctelecom.vn, mã `CTEL.<32 hex>` trong mail) và FPT eInvoice (tracuuhoadon.fpt.com.vn):
-  server **kiểm token reCAPTCHA thật** (v2 / v3) → không làm (không vượt reCAPTCHA). Nếu bỏ reCAPTCHA: CMC chỉ cần
+- CMC Telecom (cinvoice.cmctelecom.vn, mã `CTEL.<32 hex>` trong mail):
+  server **kiểm token reCAPTCHA thật** → không làm, lấy qua mail (không vượt reCAPTCHA). Nếu bỏ reCAPTCHA: CMC chỉ cần
   `POST /v1/invoice/lookup {invoiceNo, recaptchaToken}` → `{pdfContent, xmlContent}`.
 
 **Nguyên tắc:** chỉ viết adapter cho NCC có hóa đơn thật để thử (XML từ Thuế hoặc mã trong mail). Muốn thêm NCC
@@ -469,7 +514,11 @@ Quy tắc khi viết adapter:
 
 **Link trong mail → adapter:** adapter khai báo `hosts` + `invoice_from_link(url, code, mail_text)` — chỉ đọc
 tham số link / mã trong mail, **không mở link**; `fetch_pdf` (và `fetch_xml` nếu có) gọi endpoint của chính adapter.
-Đã có: misa, visnam, viettel, easyinvoice (giải mã `token`), ipos, vnpt (-tt78).
+Đã có: misa, visnam, viettel, easyinvoice (giải mã `token`), ipos, vnpt (-tt78), bkav (23/10: link
+`tracuu.ehoadon.vn/<MTC>` → GET `tchd.ehoadon.vn/TCHD?MTC=` có sẵn `ViewInvoice('<GUID>')` = `dlhdon_id`, không gửi
+form nên không đụng reCAPTCHA; thật 8/8; link trang chủ / `Login?AGUID=` → `ignored`). Lượt `mail` đầu sau khi thêm sẽ
+xử lý ~400 link BKAV một lúc (2–3 request/link). M-Invoice: link trong mail chỉ là link theo dõi Mailgun / trang chủ,
+không có khóa HĐ (124/126 mail đã kèm sẵn PDF+XML) → không làm.
 
 ## 2.7 Mail hóa đơn (`mail_reader.py`, `mail_ingest.py`)
 
@@ -502,8 +551,8 @@ tham số link / mã trong mail, **không mở link**; `fetch_pdf` (và `fetch_x
   NCC adapter chưa làm được (GSM, Jollibee, VNISC).
 - **Loại mail** (kiểm 20/10 trên hộp thật, quét thử chỉ đọc): XML + PDF đính kèm (cả trong .zip, mail forward
   dạng .eml/rfc822) → xử lý được; chỉ có link + mã → được với EasyInvoice, MISA, Viettel, iPOS, VNPT -tt78,
-  còn BKAV ehoadon (link không kèm mã), CMC/FPT/HILO GSM (reCAPTCHA), VNISC abcsys (chưa có model captcha),
-  Thái Sơn (chưa viết adapter) để `new`. **Không đọc được:** .rar/.7z, ảnh chụp HĐ, Excel, file để trên
+  BKAV (`tracuu.ehoadon.vn/<MTC>`), 247Express, VNISC, Thái Sơn, SmartSign, FAST (bổ sung 23/10);
+  còn CMC/FPT/HILO GSM (reCAPTCHA) để `new`. **Không đọc được:** .rar/.7z, ảnh chụp HĐ, Excel, file để trên
   Google Drive/OneDrive, file > 20 MB. Zip có mật khẩu/hỏng chỉ bỏ đúng file đó (sửa 20/10, trước đây cả
   mail báo lỗi). PDF HĐ thay thế/điều chỉnh có cả số HĐ gốc → bỏ số HĐ gốc khi khớp (sửa 20/10).
 - Hộp cá nhân `the.lai@` có nhiều mail nội bộ "[Webcash Việt Nam] BÀN GIAO DATA HÓA ĐƠN PHẦN MỀM WeTax…"

@@ -411,6 +411,12 @@ class _PdfStore:
         self.calls.append(("requeue", status, task_type, mst_tcgp, error_kind))
         return 0
 
+    def no_source_without_tcgp(self):
+        return []
+
+    def requeue_tasks(self, ids):
+        return 0
+
     def active_companies(self):
         return [{"company_mst": "1201496252"}, {"company_mst": "0100112233"}]
 
@@ -612,6 +618,32 @@ def test_pdf_limit_counts_only_real_fetches(tmp_path, monkeypatch):
     assert store.done == [6, 7]
     assert 8 in store.released or 8 in [t["task_id"] for t in store.pending]   # để lượt sau
     assert stats["pdf_ok"] == 2 and stats["pdf_no_source"] == 5
+
+
+class _SellerStore:
+    def __init__(self, known):
+        self.known, self.asked = known, []
+
+    def seller_mst_tcgp(self, nbmst):
+        self.asked.append(nbmst)
+        return self.known.get(nbmst)
+
+
+def test_mtt_invoice_without_mst_tcgp_is_routed_by_link_then_by_seller():
+    """HĐ máy tính tiền: XML không có MSTTCGP (vd 294 HĐ MTT Grab nằm chờ 'no_source', 23/10)."""
+    store = _SellerStore({"0312650437": "0106713804"})                 # Grab: HĐ thường đi HILO
+    pick = invoice_job.pick_adapter
+    by_link = pick(store, {"nbmst": "0317415726", "mst_tcgp": None,
+                           "lookup_url": "http://0317415726hd.easyinvoice.com.vn"})
+    by_portal = pick(store, {"nbmst": "0317415726", "mst_tcgp": None, "lookup_url": None,
+                             "tt_khac": {"PortalLink": "http://0317415726hd.easyinvoice.com.vn"}})
+    assert by_link.source_id == by_portal.source_id == "easyinvoice" and store.asked == []
+    assert pick(store, {"nbmst": "0312650437", "mst_tcgp": None}).source_id == "hilo"
+    pick(store, {"nbmst": "0312650437", "mst_tcgp": None})
+    assert store.asked == ["0312650437"]                               # nhớ trong tiến trình
+    assert pick(store, {"nbmst": "0399999999", "mst_tcgp": None}) is None
+    # có MSTTCGP mà chưa có adapter → không đoán theo người bán
+    assert pick(store, {"nbmst": "0312650437", "mst_tcgp": "0109888888"}) is None
 
 
 _GUID = "70611f78-501c-4fce-a2dc-b31dd272f873"

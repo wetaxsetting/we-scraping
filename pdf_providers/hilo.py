@@ -24,13 +24,22 @@ HILO có 2 nền tảng tra cứu (khảo sát 10/2026):
    thấy HĐ (cũng không báo lỗi) → GSM có lẽ ở nền mới nhưng chưa biết địa chỉ cổng.
    → người bán chưa có cổng trong bảng: 'no_portal' (nằm chờ; bổ sung SELLER_PORTALS rồi
    requeue --status no_source --mst-tcgp 0106713804).
+   NHƯNG link trong mail HILO gửi (kèm PDF in "Tra cứu hóa đơn điện tử tại: tracuuhddt78.hilo.com.vn,
+   mã tra cứu: <Fkey>") tải thẳng PDF, không captcha (kiểm 23/10, Kim Đại Phát 3603526528):
+     GET /Invoice/getinvoice?token=base64("<mẫu>:<ký hiệu>:<số>:<MST bán>")  → application/pdf
+         (vd "1:C26TPD:1443:3603526528"); HĐ không có → 302 về /Invoice/Index
+   Token chỉ gồm thông tin có sẵn trong XML → dùng cho người bán đã kiểm trong LEGACY_SELLERS và
+   cho link mail (invoice_from_link). Host tt78hd.hilo.com.vn dùng token KHÁC
+   ("1_C23TIH_927|<MST>") — chưa làm.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import html
 import re
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from . import register
 from .base import PdfAdapter, PdfFetchError
@@ -46,6 +55,13 @@ PORTALS = {
 # Người bán → host cổng, khi XML không ghi lookup_url.
 SELLER_PORTALS = {
     "0312650437": "vn.einvoice.grab.com",           # Công ty TNHH Grab
+}
+
+# Cổng chung cũ: tải bằng link mail /Invoice/getinvoice?token=base64("mẫu:ký hiệu:số:MST bán").
+LEGACY_BASE = "https://tracuuhddt78.hilo.com.vn"
+LEGACY_HOST = "tracuuhddt78.hilo.com.vn"
+LEGACY_SELLERS = {
+    "3603526528",                                   # Kim Đại Phát (PDF ghi tracuuhddt78; thật 1/1 + 2 PDF mail)
 }
 
 _TOKEN_RE = re.compile(r'name="__RequestVerificationToken" type="hidden" value="([^"]+)"')
@@ -130,10 +146,34 @@ def solve_svg_captcha(svg: str) -> str:
 # Adapter
 # ---------------------------------------------------------------------------
 
+def legacy_token(invoice: dict) -> str:
+    """base64("1:C26TPD:1443:3603526528") — ký hiệu không gồm chữ số mẫu ở đầu."""
+    khhdon = str(invoice.get("khhdon") or "").strip().upper()
+    if len(khhdon) == 7 and khhdon[0].isdigit():     # "1C26TPD" → "C26TPD"
+        khhdon = khhdon[1:]
+    parts = [str(invoice.get("khmshdon") or "").strip(), khhdon,
+             str(invoice.get("shdon") or "").strip().lstrip("0"), (invoice.get("nbmst") or "").strip()]
+    if not all(parts):
+        return ""
+    return base64.b64encode(":".join(parts).encode()).decode()
+
+
+def decode_legacy_token(token: str) -> dict | None:
+    try:
+        raw = base64.b64decode(token + "=" * (-len(token) % 4), validate=True).decode("ascii")
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
+    m = re.fullmatch(r"(\d):([A-Z0-9]{6}):0*(\d+):(\d{10}(?:-\d{3})?)", raw.strip())
+    if not m:
+        return None
+    return {"khmshdon": int(m.group(1)), "khhdon": m.group(2), "shdon": int(m.group(3)), "nbmst": m.group(4)}
+
+
 class HiloAdapter(PdfAdapter):
     source_id = "hilo"
     name = "T-VAN HILO"
     mst_tcgp = ("0106713804",)
+    hosts = (LEGACY_HOST,)                          # link mail getinvoice / ViewFromEmail
 
     @staticmethod
     def portal_for(invoice: dict) -> str | None:
@@ -149,8 +189,30 @@ class HiloAdapter(PdfAdapter):
         tt_khac = invoice.get("tt_khac") or {}
         return (tt_khac.get("Fkey") or tt_khac.get("FKey") or "").strip()
 
+    @staticmethod
+    def is_legacy(invoice: dict) -> bool:
+        host = (urlsplit((invoice.get("lookup_url") or "").strip()).hostname or "").lower()
+        return host == LEGACY_HOST or (invoice.get("nbmst") or "").strip() in LEGACY_SELLERS
+
+    def invoice_from_link(self, url: str, code, mail_text: str):
+        """Link mail tracuuhddt78: /Invoice/getinvoice|ViewFromEmail?token=.. → dict HĐ. Không mở link."""
+        parts = urlsplit(url or "")
+        if (parts.hostname or "").lower() != LEGACY_HOST:
+            return None
+        if parts.path.lower().rstrip("/") not in ("/invoice/getinvoice", "/invoice/viewfromemail"):
+            return None
+        tok = ({k.lower(): v[0] for k, v in parse_qs(parts.query).items() if v}.get("token") or "").strip()
+        fields = decode_legacy_token(tok)
+        if not fields:
+            return None
+        key = (code or "").strip()
+        return {**fields, "mst_tcgp": self.mst_tcgp[0], "lookup_url": f"{LEGACY_BASE}/",
+                "tt_khac": {"Fkey": key} if key else {}}
+
     def fetch_pdf(self, invoice: dict) -> bytes:
         base = self.portal_for(invoice)
+        if not base and self.is_legacy(invoice):
+            return self._legacy_pdf(invoice)
         if not base:
             raise PdfFetchError(
                 f"Chưa biết cổng tra cứu HILO của người bán {invoice.get('nbmst')} "
@@ -172,6 +234,24 @@ class HiloAdapter(PdfAdapter):
         r = request(s, "GET", base + link, headers={"Referer": referer})
         if r.status_code != 200:
             raise PdfFetchError(f"HILO DowloadPdf trả HTTP {r.status_code}", "other")
+        if not is_pdf(r.content):
+            raise PdfFetchError(
+                f"HILO trả nội dung không phải PDF ({r.headers.get('Content-Type')})", "bad_content")
+        check_pdf_is_invoice(r.content, invoice)
+        return r.content
+
+    def _legacy_pdf(self, invoice: dict) -> bytes:
+        tok = legacy_token(invoice)
+        if not tok:
+            raise PdfFetchError("Thiếu mẫu/ký hiệu/số/MST bán để dựng link tải HILO", "no_code")
+        r = request(new_session(), "GET", f"{LEGACY_BASE}/Invoice/getinvoice", params={"token": tok},
+                    headers={"Referer": f"{LEGACY_BASE}/"}, allow_redirects=False)
+        if r.status_code in (301, 302, 303):
+            raise PdfFetchError(
+                f"HILO không tìm thấy HĐ {invoice.get('khhdon')}-{invoice.get('shdon')} của "
+                f"{invoice.get('nbmst')} trên {LEGACY_HOST}", "no_pdf")
+        if r.status_code != 200:
+            raise PdfFetchError(f"HILO getinvoice trả HTTP {r.status_code}", "server")
         if not is_pdf(r.content):
             raise PdfFetchError(
                 f"HILO trả nội dung không phải PDF ({r.headers.get('Content-Type')})", "bad_content")

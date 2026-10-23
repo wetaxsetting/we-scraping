@@ -26,6 +26,8 @@ PROD_MODELS = {
     "g_150x34": "adapter easyinvoice",
     "g_80x30": "adapter vnpt",
     "g_1500x350": "adapter visnam",
+    "g_300x75": "adapter xcyber (CyberLotus)",
+    "g_200x70": "adapter thaison (Thai Son)",
 }
 PACKAGES = ["torch", "numpy", "cv2", "PIL", "yaml", "requests", "psycopg2",
             "dotenv", "openpyxl", "fitz", "playwright", "skia", "ddddocr"]

@@ -51,6 +51,7 @@ import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -472,6 +473,33 @@ def process_pdf(store, company, run_id, limit, stats, out_dir) -> None:
         store.release_tasks(deferred)
 
 
+def pick_adapter(store, task: dict):
+    """
+    source_id gắn tay (set-provider) → MSTTCGP. XML không có MSTTCGP (HĐ máy tính tiền) thì
+    theo host link tra cứu trong XML, rồi theo NCC quen của người bán (HĐ khác của họ có MSTTCGP:
+    vd 294 HĐ MTT của Grab đi cổng Grab của HILO, 23/10).
+    """
+    adapter = (pdf_providers.get_adapter(task.get("source_id"))
+               or pdf_providers.adapter_for_mst_tcgp(task.get("mst_tcgp")))
+    if adapter is not None or task.get("mst_tcgp"):
+        return adapter
+    tt_khac = task.get("tt_khac") if isinstance(task.get("tt_khac"), dict) else {}
+    for url in (task.get("lookup_url"), tt_khac.get("PortalLink")):
+        adapter = pdf_providers.adapter_for_host(urlsplit(url or "").hostname)
+        if adapter is not None:
+            return adapter
+    nbmst = task.get("nbmst")
+    if not nbmst:
+        return None
+    cache = store.__dict__.setdefault("_seller_tcgp", {})       # 1 truy vấn / người bán / tiến trình
+    if nbmst not in cache:
+        found = store.seller_mst_tcgp(nbmst)
+        if found is None:
+            return None                     # chưa biết thì không nhớ: HĐ thường của họ có thể về sau
+        cache[nbmst] = found
+    return pdf_providers.adapter_for_mst_tcgp(cache[nbmst])
+
+
 def pdf_batch(store, mst, run_id, batch, stats, out_dir, breakers, deferred,
               limit: int | None = None) -> int:
     """
@@ -481,9 +509,7 @@ def pdf_batch(store, mst, run_id, batch, stats, out_dir, breakers, deferred,
     """
     handled = 0
     for task in batch:
-        # source_id gắn tay (set-provider) ưu tiên; không có thì theo MSTTCGP
-        adapter = (pdf_providers.get_adapter(task.get("source_id"))
-                   or pdf_providers.adapter_for_mst_tcgp(task.get("mst_tcgp")))
+        adapter = pick_adapter(store, task)
         if adapter is None:
             reason = (f"Chưa có adapter cho MSTTCGP {task.get('mst_tcgp') or '?'}"
                       if not task.get("source_id")
@@ -595,6 +621,11 @@ def _prepare_queues(store) -> None:
                           error_kind="no_source")      # 'no_portal' chờ bổ sung cổng thủ công
         if n:
             log.info("MSTTCGP %s đã có adapter → %d HĐ quay lại hàng đợi PDF", mst_tcgp, n)
+    # HĐ máy tính tiền không có MSTTCGP: định tuyến được (link / NCC quen của người bán) → chạy lại
+    routable = [t["task_id"] for t in store.no_source_without_tcgp() if pick_adapter(store, t) is not None]
+    n = store.requeue_tasks(routable)
+    if n:
+        log.info("HĐ không có MSTTCGP đã định tuyến được NCC → %d HĐ quay lại hàng đợi PDF", n)
 
 
 def cmd_pdf(store, args) -> int:

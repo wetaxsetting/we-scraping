@@ -209,3 +209,84 @@ def test_errors(monkeypatch, ocr, page, pdf, kind):
     with pytest.raises(PdfFetchError) as ei:
         hilo.HiloAdapter().fetch_pdf(GRAB)
     assert ei.value.kind == kind
+
+
+# --- cổng chung cũ tracuuhddt78: link mail getinvoice?token=base64("mẫu:ký hiệu:số:MST") ---------
+
+KDP = {"shdon": 1443, "khhdon": "C26TPD", "khmshdon": 1, "nbmst": "3603526528",
+       "nbten": "CÔNG TY TNHH DỊCH VỤ ĂN UỐNG KIM ĐẠI PHÁT", "lookup_url": None,
+       "tt_khac": {"Fkey": "873c8c9b-2f76-4ce5-878b-147f8010157d", "SearchKey": "00164181792592440"}}
+KDP_TOKEN = "MTpDMjZUUEQ6MTQ0MzozNjAzNTI2NTI4"          # token thật trong mail = "1:C26TPD:1443:3603526528"
+
+
+def _install_legacy(monkeypatch, resp, calls):
+    def fake(session, method, url, **kw):
+        calls.append((method, url, kw))
+        assert url == "https://tracuuhddt78.hilo.com.vn/Invoice/getinvoice"
+        return resp
+    monkeypatch.setattr(hilo, "request", fake)
+    monkeypatch.setattr(hilo, "new_session", lambda: object())
+
+
+def test_legacy_token_matches_mail_link():
+    assert hilo.legacy_token(KDP) == KDP_TOKEN
+    assert hilo.legacy_token(dict(KDP, khhdon="1C26TPD", shdon="00001443")) == KDP_TOKEN
+    assert hilo.legacy_token(dict(KDP, shdon=None)) == ""
+    assert hilo.decode_legacy_token(KDP_TOKEN) == {"khmshdon": 1, "khhdon": "C26TPD", "shdon": 1443,
+                                                   "nbmst": "3603526528"}
+    assert hilo.decode_legacy_token("bad!!") is None
+    assert hilo.decode_legacy_token("MV9DMjNUSUhfOTI3fDAzMDA2NDgyMTg=") is None   # kiểu tt78hd, khác
+
+
+def test_legacy_seller_downloads_without_captcha(monkeypatch):
+    calls = []
+    _install_legacy(monkeypatch, _Resp(content=_pdf_with("So 1443"),
+                                       headers={"Content-Type": "application/pdf"}), calls)
+    assert hilo.HiloAdapter.portal_for(KDP) is None and hilo.HiloAdapter.is_legacy(KDP)
+    assert hilo.HiloAdapter().fetch_pdf(KDP).startswith(b"%PDF")
+    assert len(calls) == 1 and calls[0][2]["params"] == {"token": KDP_TOKEN}
+    assert calls[0][2]["allow_redirects"] is False
+
+
+def test_legacy_by_lookup_url_host(monkeypatch):
+    inv = dict(KDP, nbmst="0314336219", khhdon="C24TVG", shdon=311,
+               lookup_url="https://tracuuhddt78.hilo.com.vn/")
+    calls = []
+    _install_legacy(monkeypatch, _Resp(content=_pdf_with("So 311"),
+                                       headers={"Content-Type": "application/pdf"}), calls)
+    assert hilo.HiloAdapter().fetch_pdf(inv).startswith(b"%PDF")
+    assert hilo.decode_legacy_token(calls[0][2]["params"]["token"])["nbmst"] == "0314336219"
+
+
+@pytest.mark.parametrize("resp,kind", [
+    (_Resp(status=302, headers={"Location": "/Invoice/Index"}), "no_pdf"),     # HĐ không có
+    (_Resp(content=b"<html>x</html>", headers={"Content-Type": "text/html"}), "bad_content"),
+    (_Resp(status=404), "server"),
+])
+def test_legacy_errors(monkeypatch, resp, kind):
+    _install_legacy(monkeypatch, resp, [])
+    with pytest.raises(PdfFetchError) as ei:
+        hilo.HiloAdapter().fetch_pdf(KDP)
+    assert ei.value.kind == kind
+
+
+def test_legacy_wrong_invoice_pdf_rejected(monkeypatch):
+    _install_legacy(monkeypatch, _Resp(content=_pdf_with("So 9999"),
+                                       headers={"Content-Type": "application/pdf"}), [])
+    with pytest.raises(PdfFetchError):
+        hilo.HiloAdapter().fetch_pdf(KDP)
+
+
+def test_invoice_from_link_legacy():
+    a = hilo.HiloAdapter()
+    inv = a.invoice_from_link(f"https://tracuuhddt78.hilo.com.vn/Invoice/getinvoice?token={KDP_TOKEN}",
+                              "873c8c9b-2f76-4ce5-878b-147f8010157d", "")
+    assert inv["nbmst"] == "3603526528" and inv["shdon"] == 1443 and inv["khhdon"] == "C26TPD"
+    assert inv["tt_khac"] == {"Fkey": "873c8c9b-2f76-4ce5-878b-147f8010157d"}
+    assert a.is_legacy(inv)
+    assert a.invoice_from_link(f"https://tracuuhddt78.hilo.com.vn/Invoice/ViewFromEmail?token={KDP_TOKEN}",
+                               None, "")["shdon"] == 1443
+    assert a.invoice_from_link("https://tracuuhddt78.hilo.com.vn/Invoice/Download78?id=161052071",
+                               "161052071", "") is None
+    assert a.invoice_from_link("https://tracking.hilo.com.vn/api.php?x=1", None, "") is None
+    assert pdf_providers.adapter_for_host("tracuuhddt78.hilo.com.vn").source_id == "hilo"

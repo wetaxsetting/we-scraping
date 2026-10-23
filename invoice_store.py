@@ -667,6 +667,48 @@ class InvoiceStore:
             cur.execute(sql, params)
             return cur.rowcount
 
+    def seller_mst_tcgp(self, nbmst: str) -> str | None:
+        """
+        NCC quen của 1 người bán: MSTTCGP hay gặp nhất trên các HĐ khác của họ (khớp MST đầy đủ,
+        không có thì theo MST công ty mẹ). Dùng cho HĐ máy tính tiền, XML không ghi MSTTCGP.
+        """
+        nbmst = (nbmst or "").strip()
+        with self._tx() as cur:
+            for key, cond in ((nbmst, "i.nbmst = %s"), (nbmst.split("-")[0], "split_part(i.nbmst, '-', 1) = %s")):
+                cur.execute(f"""
+                    SELECT x.mst_tcgp FROM invoices i JOIN invoice_xml x ON x.invoice_id = i.id
+                     WHERE {cond} AND x.mst_tcgp IS NOT NULL
+                     GROUP BY x.mst_tcgp ORDER BY count(*) DESC LIMIT 1
+                """, (key,))
+                row = cur.fetchone()
+                if row:
+                    return row["mst_tcgp"]
+        return None
+
+    def no_source_without_tcgp(self) -> list:
+        """Task PDF đang 'no_source' vì XML không có MSTTCGP (HĐ máy tính tiền) — để định tuyến lại."""
+        with self._tx() as cur:
+            cur.execute("""
+                SELECT t.id AS task_id, i.nbmst, x.lookup_url, x.parsed -> 'tt_khac' AS tt_khac
+                  FROM tasks t JOIN invoices i ON i.id = t.invoice_id
+                  JOIN invoice_xml x ON x.invoice_id = i.id
+                 WHERE t.task_type = 'pdf' AND t.status = 'no_source' AND t.error_kind = 'no_source'
+                   AND x.mst_tcgp IS NULL
+            """)
+            return cur.fetchall()
+
+    def requeue_tasks(self, task_ids: list) -> int:
+        """Đưa đúng các task này về hàng đợi (reset số lần thử)."""
+        if not task_ids:
+            return 0
+        with self._tx() as cur:
+            cur.execute("""
+                UPDATE tasks SET status='pending', attempts=0, next_run_at=now(),
+                       locked_at=NULL, updated_at=now()
+                 WHERE id = ANY(%s)
+            """, (list(task_ids),))
+            return cur.rowcount
+
     def set_provider_source(self, mst_tcgp: str, source_id: str | None,
                             name: str | None = None) -> int:
         """Gắn adapter cho 1 đơn vị cung cấp HĐĐT, rồi đưa các task PDF đang chờ về hàng đợi."""

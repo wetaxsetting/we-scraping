@@ -149,7 +149,8 @@ def extract_links(text: str) -> list:
     """Link có thể là cổng tra cứu (bỏ link theo dõi/ảnh/mạng xã hội), kèm mã nếu nằm trên URL."""
     seen, out = set(), []
     for raw in _URL_RE.findall(text):
-        url = html.unescape(raw).rstrip(".,;")
+        # &nbsp; dính sau link thành \xa0 sau unescape → cắt ở khoảng trắng đầu tiên
+        url = html.unescape(raw).split(maxsplit=1)[0].rstrip(".,;")
         parts = urlsplit(url)
         host = (parts.hostname or "").lower()
         if not host or any(p in host for p in _SKIP_HOST_PARTS):

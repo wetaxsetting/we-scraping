@@ -45,6 +45,16 @@ from . import myinvoice  # noqa: E402,F401  My Software / MyInvoice (0108971656)
 from . import visnam  # noqa: E402,F401  Visnam vin-hoadon (0401486901) — captcha g_1500x350
 from . import bkav  # noqa: E402,F401  BKAV eHoadon (0101360697) — tra bằng DLHDon/@Id
 from . import ipos  # noqa: E402,F401  iPOS (0104789847) — PDF + XML qua link trong mail, không captcha
+from . import thaco  # noqa: E402,F401  THACO (3600252847) — link DownloadPdf trong TTKhac, không captcha
+from . import vinhhy  # noqa: E402,F401  Vĩnh Hy ehoadondientu.com (0314743623) — tra bằng DLHDon/@Id, không captcha
+from . import minhkhang  # noqa: E402,F401  Minh Khang hoadondientuvat.com (0314209362) — cùng nền tảng Vĩnh Hy
+from . import xcyber  # noqa: E402,F401  CyberLotus xcyber/cyberbill (0105232093) — captcha g_300x75
+from . import thaison  # noqa: E402,F401  Thái Sơn einvoice.vn / einvoice.mmvietnam.com (0101300842) — captcha g_200x70
+from . import smartsign  # noqa: E402,F401  SmartSign / Vi Na (0309612872) — captcha bằng ddddocr
+from . import pavietnam  # noqa: E402,F401  P.A Việt Nam hoadon.pavietnam.vn (0302431595) — mã chỉ có trong mail
+from . import vnisc  # noqa: E402,F401  VNISC invoice.abcsys.vn (0102331762) — captcha bằng ddddocr
+from . import fast  # noqa: E402,F401  FAST einvoice.fast.com.vn (0100727825) — TTKhac KeySearch; bước tải không kiểm captcha
+from . import express247  # noqa: E402,F401  247Express hoadon.247express.vn (người bán 0304043037) — mã từ link mail, không captcha
 
 
 def supported_mst_tcgp() -> list:

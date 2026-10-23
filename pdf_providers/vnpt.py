@@ -46,6 +46,9 @@ HĐ K26THA-6471438). Cùng phần mềm, cùng captcha với Petrolimex nhưng f
 Fkey của VNPT nằm ở thẻ <HDon><Fkey> (ngoài DLHDon, xml_parser chưa đọc) → nếu dict HĐ không có
 mã thì đọc lại file XML theo xml_path (dict từ DB). Mail "Thông báo phát hành HDDT" ghi
 "Mã tra cứu hóa đơn: ..." → invoice_from_link.
+Nhiều người bán -tt78 KHÔNG ghi Fkey vào XML; "Mã tra cứu" in trên PDF là một trường khác của XML
+(Golf Long Thành: TTKhac "Extra"; SW F&B CN2, Navigos: MCCQT — kiểm 23/10, MCCQT cũng tra được trên
+cổng Golf) → khai báo "keys" trong SELLER_PORTALS. Cổng -tt78 chỉ có form tra theo Fkey (+ đăng nhập).
 
 Chưa làm: cổng tracuuhoadon.vnpt-invoice.com.vn.
 """
@@ -73,13 +76,25 @@ CAPTCHA_TRIES = 3
 PORTALS = {
     "petrolimex": "https://hoadon.petrolimex.com.vn",
     "vttphcm": "https://vttphcm-tt78.vnpt-invoice.com.vn",     # VNPT TP.HCM (cước viễn thông) — dạng -tt78
+    "golflongthanh": "https://golflongthanh-tt78.vnpt-invoice.com.vn",
+    "swfoodsbeveragescn2": "https://swfoodsbeveragescn2-tt78.vnpt-invoice.com.vn",
+    "navigos": "https://navigos-tt78.vnpt-invoice.com.vn",
 }
 
-# Người bán → cổng. Khớp theo MST (chính xác) hoặc tên người bán (chứa chuỗi, không phân biệt hoa thường).
+# Người bán → cổng. Khớp theo MST (chính xác, rồi MST công ty mẹ của chi nhánh "-001") hoặc tên
+# người bán (chứa chuỗi, không phân biệt hoa thường).
 # Bổ sung từ dòng "Website tra cứu" in trên hóa đơn của người bán đó.
+# "keys": nơi lấy mã tra cứu khi XML không có Fkey (lấy cái ĐẦU TIÊN có giá trị, không thử lần lượt —
+# cổng -tt78 treo 45 s với mã sai): tên trường TTKhac, hoặc "ma_cqt" (MCCQT). Mã in trên PDF
+# ("Mã tra cứu: ...") đối chiếu với XML để biết là trường nào.
 SELLER_PORTALS = [
-    {"portal": "petrolimex", "mst": {"0300555450"}, "name_contains": "PETROLIMEX"},
+    {"portal": "petrolimex", "mst": {"0300555450"}, "name_contains": "PETROLIMEX"},  # gồm CN -001 (KV II)
     {"portal": "vttphcm", "mst": {"0300954529"}},             # Viễn thông TP.HCM
+    # Golf Long Thành: mã tra cứu = TTKhac "Extra" (R20260505-0079); HĐ không có Extra → MCCQT (thật 6/6)
+    {"portal": "golflongthanh", "mst": {"3600718503"}, "keys": ("Extra", "ma_cqt")},
+    # SW F&B chi nhánh 2 (CN 1 dùng BKAV): mã tra cứu in trên PDF = MCCQT (thật 6/6)
+    {"portal": "swfoodsbeveragescn2", "mst": {"0313894637-002"}, "keys": ("ma_cqt",)},
+    {"portal": "navigos", "mst": {"0304836029"}, "keys": ("ma_cqt",)},      # Navigos Group (thật 1/1)
 ]
 
 _TOKEN_RE = r'id="{form_id}".*?name="__RequestVerificationToken" type="hidden" value="([^"]+)"'
@@ -136,6 +151,19 @@ class _WrongCaptcha(Exception):
     pass
 
 
+def _read_captcha(img: bytes) -> str:
+    """4 chữ số, hoặc _WrongCaptcha (model không chắc / đọc lệch) → lấy captcha mới, không gửi bừa."""
+    try:
+        answer = solve_captcha(img, CAPTCHA_GROUP, min_conf=0.9)
+    except PdfFetchError as e:
+        if e.kind != "captcha":
+            raise
+        raise _WrongCaptcha(str(e)) from e
+    if not (len(answer) == 4 and answer.isdigit()):
+        raise _WrongCaptcha(f"model đọc {answer!r}, captcha VNPT là 4 chữ số")
+    return answer
+
+
 class VnptAdapter(PdfAdapter):
     source_id = "vnpt"
     name = "VNPT Invoice"
@@ -146,22 +174,42 @@ class VnptAdapter(PdfAdapter):
         self._codes: dict = {}            # (cổng, Fkey) → checkCode: fetch_xml + fetch_pdf chỉ giải 1 captcha
 
     @staticmethod
-    def portal_for(invoice: dict) -> str | None:
+    def seller_rule(invoice: dict) -> dict | None:
+        """Dòng SELLER_PORTALS của người bán: MST chính xác > MST công ty mẹ (chi nhánh -00x) > tên."""
         mst = (invoice.get("nbmst") or "").strip()
+        parent = mst.split("-")[0]
         name = (invoice.get("nbten") or "").upper()
-        for rule in SELLER_PORTALS:
-            if mst in rule.get("mst", ()) or (rule.get("name_contains") and rule["name_contains"] in name):
-                return PORTALS[rule["portal"]]
+        tests = (lambda r: bool(mst) and mst in r.get("mst", ()),
+                 lambda r: bool(parent) and parent != mst and parent in r.get("mst", ()),
+                 lambda r: bool(r.get("name_contains")) and r["name_contains"] in name)
+        for test in tests:
+            for rule in SELLER_PORTALS:
+                if test(rule):
+                    return rule
+        return None
+
+    @classmethod
+    def portal_for(cls, invoice: dict) -> str | None:
+        rule = cls.seller_rule(invoice)
+        if rule:
+            return PORTALS[rule["portal"]]
         url = (invoice.get("lookup_url") or "").strip()   # link -tt78 lấy từ mail
         if _is_tt78(url):
             return f"https://{urlsplit(url).hostname.lower()}"
         return None
 
-    @staticmethod
-    def fkey(invoice: dict) -> str:
+    @classmethod
+    def fkey(cls, invoice: dict) -> str:
         tt_khac = invoice.get("tt_khac") or {}
         key = (tt_khac.get("Fkey") or tt_khac.get("FKey") or invoice.get("ma_tra_cuu") or "").strip()
-        return key or _root_fkey(invoice)
+        key = key or _root_fkey(invoice)
+        if key:
+            return key
+        for src in (cls.seller_rule(invoice) or {}).get("keys", ()):   # mã riêng của người bán
+            val = str((invoice.get(src) if src == "ma_cqt" else tt_khac.get(src)) or "").strip()
+            if val:
+                return val
+        return ""
 
     def invoice_from_link(self, url: str, code, mail_text: str):
         """
@@ -229,9 +277,7 @@ class VnptAdapter(PdfAdapter):
         if not m:
             raise PdfFetchError(f"Không thấy form tra cứu theo Fkey trên {base}", "server")
         img = request(s, "GET", f"{base}/Captcha/Show", headers={"Referer": f"{base}/"})
-        answer = solve_captcha(img.content, CAPTCHA_GROUP, min_conf=0.9)
-        if not (len(answer) == 4 and answer.isdigit()):
-            raise _WrongCaptcha(f"model đọc {answer!r}, captcha VNPT là 4 chữ số")   # không gửi bừa
+        answer = _read_captcha(img.content)
         r = request(s, "POST", f"{base}/SearchInvoicebycode/Index",
                     data={"__RequestVerificationToken": m.group(1), "tab": "content1",
                           "strFkey": fkey, "captch": answer},
@@ -321,9 +367,7 @@ class VnptAdapter(PdfAdapter):
         if not m:
             raise PdfFetchError(f"Không thấy form tra cứu theo Fkey trên {base}", "server")
         img = request(s, "GET", f"{base}/Captcha/Show", headers={"Referer": f"{base}/"})
-        answer = solve_captcha(img.content, CAPTCHA_GROUP, min_conf=0.9)
-        if not (len(answer) == 4 and answer.isdigit()):
-            raise _WrongCaptcha(f"model đọc {answer!r}, captcha VNPT là 4 chữ số")   # không gửi bừa
+        answer = _read_captcha(img.content)
         try:
             r = request(s, "POST", f"{base}/HomeNoLogin/SearchByFkey",
                         data={"__RequestVerificationToken": m.group(1), "isHomepage": "true",

@@ -314,6 +314,11 @@ def test_non_invoice_mail_stores_nothing_but_id(tmp_path):
     assert rec["subject"] is None and rec["from"] is None and not store.files and not store.links
 
 
+def test_link_followed_by_nbsp_is_cut():
+    links = mail_reader.extract_links("Tra cứu: http://tracuuhoadon.minvoice.vn&nbsp;Mã: X")
+    assert [(l.url, l.host) for l in links] == [("http://tracuuhoadon.minvoice.vn", "tracuuhoadon.minvoice.vn")]
+
+
 def test_links_only_mail_records_links_with_code(tmp_path):
     store = _Store([])
     html = '<p>Mã tra cứu: QX7PL2MN9</p><a href="https://tracuu.vin-hoadon.com/tra-cuu">Tra cứu</a>'

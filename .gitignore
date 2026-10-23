@@ -49,7 +49,7 @@ bin/
 obj/
 
 # Model đang dùng thật (Git LFS, xem .gitattributes) — chỉ best.pt + history.csv:
-#   g_600x120 đăng nhập Thuế | g_150x34 EasyInvoice | g_80x30 VNPT | g_1500x350 Visnam
+#   g_600x120 đăng nhập Thuế | g_150x34 EasyInvoice | g_80x30 VNPT | g_1500x350 Visnam | g_300x75 CyberLotus
 # Dùng thêm nhóm nào (adapter mới) thì thêm 1 dòng !runs/<nhóm>/ ở đây.
 !runs/
 runs/*
@@ -57,15 +57,9 @@ runs/*
 !runs/g_150x34/
 !runs/g_80x30/
 !runs/g_1500x350/
+!runs/g_300x75/
 runs/*/*
 !runs/*/best.pt
 !runs/*/history.csv
-# g_200x70: bản height=32 test 89,24% (config đã đổi sang height=48 để train lại 20/10).
-# best.pt ngoài cùng là lượt train h48 đang dở → chưa đưa lên.
+# g_200x70 (Thái Sơn): bản height=32, test 89,24%, meta đã vá charset (23/10 dùng lại cho adapter)
 !runs/g_200x70/
-!runs/g_200x70/h32_89pct/
-runs/g_200x70/h32_89pct/*
-!runs/g_200x70/h32_89pct/best.pt
-!runs/g_200x70/h32_89pct/history.csv
-runs/g_200x70/best.pt
-runs/g_200x70/history.csv

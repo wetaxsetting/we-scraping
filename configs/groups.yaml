@@ -300,14 +300,14 @@ groups:
   charset_mode: core
   min_freq: 0.005
   review: false
-  width: 137
-  height: 48
+  width: 91
+  height: 32
   in_channels: 1
   clahe: false
   clip_above: null
-  note: '(200, 70) n=11311. height 32->48 (W 91->137, T 22->34) ngay 20/10 de sua loi
-    CTC nuot ky tu lap (LWWD->LWD) - nhan co ky tu lap sai 32.9% vs 10.8% chung. Ban
-    height=32 dat test 89.24% luu o runs/g_200x70/h32_89pct/'
+  note: '(200, 70) n=11311. 23/10 dung lai ban height=32 (test 89.24%, meta da va charset 24 ky tu)
+    de viet adapter Thai Son. Thu height 48 (W 137, T 34) de sua loi CTC nuot ky tu lap (LWWD->LWD)
+    thi doi lai width/height + train lai.'
 - group_id: g_200x80
   sizes:
   - - 200

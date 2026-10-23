@@ -56,6 +56,12 @@ class _WorkerStore:
     def requeue(self, *a, **k):
         return 0
 
+    def no_source_without_tcgp(self):
+        return []
+
+    def requeue_tasks(self, ids):
+        return 0
+
     def claim_round_robin(self, task_type, per_company, limit, exclude_msts=()):
         self.claims.append((task_type, per_company, limit, sorted(exclude_msts)))
         return self.batches.pop(0) if self.batches else []

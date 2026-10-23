@@ -169,3 +169,83 @@ def test_db_row_types(monkeypatch):
     _install(monkeypatch, PAGE_FILE, pdf, [])
     row = {**INV, "tt_khac": None, "tong_tien": Decimal("4320000"), "ngay_lap": date(2026, 9, 30)}
     assert bkav.BkavAdapter().fetch_pdf(row) == pdf
+
+
+# --- link trong mail (MTC → GUID qua trang TCHD) ------------------------------
+
+MTC = "S9HV4YIT3F7"
+SUBJECT = f"Hóa đơn số 00000609 - MTC: {MTC} của CÔNG TY TNHH WEBCASH VIỆT NAM tại CÔNG TY X đã được Phát hành"
+PAGE_TCHD = ('<form method="post" action="./TCHD?MTC=x" id="ctl00">'
+             '<div class="g-recaptcha" data-sitekey="k" style="display: none"></div></form>'
+             f"<script>//<![CDATA[\nViewInvoice('{GUID}');WebForm_AutoFocus('txtInvoiceCode');//]]></script>")
+PAGE_TCHD_BAD = ("<script>bkav_alert_error('Mã tra cứu Hóa đơn <b>ZZZ</b> không đúng, Bạn vui lòng thử lại!"
+                 "<br>Ghi chú: … [!|639283664668236096|!]', 910);</script>")
+
+
+def test_registered_for_ehoadon_hosts():
+    for host in ("tracuu.ehoadon.vn", "pizzahut.ehoadon.vn", "van.ehoadon.vn", "ehoadon.vn"):
+        assert pdf_providers.adapter_for_host(host).source_id == "bkav"
+    assert pdf_providers.adapter_for_host("ehoadondientu.com").source_id != "bkav"   # Vĩnh Hy
+
+
+@pytest.mark.parametrize("url, code, expect", [
+    (f"http://tracuu.ehoadon.vn/{MTC}", None, {"ma_tra_cuu": MTC, "tt_khac": {"MTC": MTC}, "shdon": 609}),
+    (f"https://pizzahut.ehoadon.vn/{MTC}", None, {"ma_tra_cuu": MTC, "tt_khac": {"MTC": MTC}, "shdon": 609}),
+    (f"https://tchd.ehoadon.vn/TCHD?MTC={MTC}", None, {"ma_tra_cuu": MTC, "tt_khac": {"MTC": MTC}, "shdon": 609}),
+    ("https://tracuu.ehoadon.vn/", MTC, {"ma_tra_cuu": MTC, "tt_khac": {"MTC": MTC}, "shdon": 609}),
+    (f"http://van.ehoadon.vn/Lookup?InvoiceGUID={GUID}&IsDownload=true", None, {"dlhdon_id": GUID, "tt_khac": {}}),
+    # không mang khóa HĐ → None (mỗi mail chỉ tra theo đúng 1 link)
+    ("http://ehoadon.vn/hdpb6a", None, None),
+    ("http://phaplyhd.ehoadon.vn/", MTC, None),
+    ("http://van.ehoadon.vn/Login?AGUID=962c4a76-18d3-40cd-b2db-21dfc4d8afeb&BTaxCode=1201496252", None, None),
+    ("https://tracuu.ehoadon.vn/", "176355111333716814444054527645", None),
+    ("https://tracuu.ehoadon.vn/", None, None),
+])
+def test_invoice_from_link(url, code, expect):
+    assert bkav.BkavAdapter().invoice_from_link(url, code, SUBJECT) == expect
+
+
+def test_invoice_from_link_shdon_only_when_subject_mtc_matches():
+    inv = bkav.BkavAdapter().invoice_from_link("http://tracuu.ehoadon.vn/QXUKNZ2NYC9", None, SUBJECT)
+    assert inv == {"ma_tra_cuu": "QXUKNZ2NYC9", "tt_khac": {"MTC": "QXUKNZ2NYC9"}}
+
+
+def _install_tchd(monkeypatch, tchd_page, page, pdf, calls):
+    _install(monkeypatch, page, pdf, calls)
+    inner = bkav.request
+
+    def fake(session, method, url, **kw):
+        if url == bkav.TCHD:
+            calls.append((method, url, kw))
+            return _Resp(text=tchd_page)
+        return inner(session, method, url, **kw)
+    monkeypatch.setattr(bkav, "request", fake)
+
+
+def test_fetch_from_mail_link_resolves_guid_via_tchd(monkeypatch):
+    calls = []
+    pdf = _pdf_with("C26TGN So 00000609")
+    _install_tchd(monkeypatch, PAGE_TCHD, PAGE_FILE, pdf, calls)
+    inv = bkav.BkavAdapter().invoice_from_link(f"http://tracuu.ehoadon.vn/{MTC.lower()}", None, "")
+    assert inv is None                                       # MTC trên link luôn viết hoa
+    inv = bkav.BkavAdapter().invoice_from_link(f"http://tracuu.ehoadon.vn/{MTC}", None, SUBJECT)
+    assert bkav.BkavAdapter().fetch_pdf(dict(inv)) == pdf
+    (m1, u1, k1), (m2, u2, k2), _ = calls
+    assert (m1, k1["params"]) == ("GET", {"MTC": MTC})       # chỉ GET trang, không gửi form tra cứu
+    assert k2["params"]["InvoiceGUID"] == GUID
+
+
+def test_fetch_from_mail_link_bad_mtc_is_no_pdf(monkeypatch):
+    calls = []
+    _install_tchd(monkeypatch, PAGE_TCHD_BAD, PAGE_FILE, b"", calls)
+    with pytest.raises(PdfFetchError) as e:
+        bkav.BkavAdapter().fetch_pdf({"ma_tra_cuu": MTC, "tt_khac": {"MTC": MTC}})
+    assert e.value.kind == "no_pdf" and "không đúng" in str(e.value)
+    assert len(calls) == 1
+
+
+def test_fetch_from_mail_link_checks_shdon_from_subject(monkeypatch):
+    _install_tchd(monkeypatch, PAGE_TCHD, PAGE_FILE, _pdf_with("C26TGN So 00000777"), [])
+    with pytest.raises(PdfFetchError) as e:
+        bkav.BkavAdapter().fetch_pdf({"ma_tra_cuu": MTC, "tt_khac": {"MTC": MTC}, "shdon": 609})
+    assert e.value.kind == "bad_content"

@@ -259,3 +259,71 @@ def test_invoice_from_link_code_from_process_links_lines():
 ])
 def test_invoice_from_link_unusable(url, text):
     assert vnpt.VnptAdapter().invoice_from_link(url, None, text) is None
+
+
+# --- Người bán có cổng -tt78 riêng, mã tra cứu là trường khác của XML -----------------
+
+GOLF = {"shdon": 24387, "khhdon": "C26TLT", "khmshdon": 1, "nbmst": "3600718503",
+        "nbten": "CÔNG TY CỔ PHẦN ĐẦU TƯ VÀ KINH DOANH GOLF LONG THÀNH",
+        "tt_khac": {"Extra": "R20260505-0079"}, "ma_cqt": "00B3AD55267F584C659E517C9D484615E4"}
+SW2 = {"shdon": 888, "khhdon": "C24TAA", "khmshdon": 1, "nbmst": "0313894637-002",
+       "nbten": "CÔNG TY CỔ PHẦN THỰC PHẨM & ĐỒ UỐNG SW - CHI NHÁNH 2", "tt_khac": {},
+       "ma_cqt": "008E9A81FF5E014211AADC1EA23F8AE172"}
+
+
+@pytest.mark.parametrize("inv,base,key", [
+    (GOLF, "https://golflongthanh-tt78.vnpt-invoice.com.vn", "R20260505-0079"),
+    (dict(GOLF, tt_khac={}), "https://golflongthanh-tt78.vnpt-invoice.com.vn",
+     "00B3AD55267F584C659E517C9D484615E4"),                              # không có Extra → MCCQT
+    (SW2, "https://swfoodsbeveragescn2-tt78.vnpt-invoice.com.vn", "008E9A81FF5E014211AADC1EA23F8AE172"),
+    ({"nbmst": "0304836029", "tt_khac": {"Extra3": "0"}, "ma_cqt": "00725E15"},
+     "https://navigos-tt78.vnpt-invoice.com.vn", "00725E15"),
+])
+def test_seller_portal_and_key(inv, base, key):
+    assert vnpt.VnptAdapter.portal_for(inv) == base
+    assert vnpt.VnptAdapter.fkey(inv) == key
+
+
+def test_xml_fkey_wins_over_seller_key():
+    inv = dict(SW2, tt_khac={"Fkey": "REALFKEY"})
+    assert vnpt.VnptAdapter.fkey(inv) == "REALFKEY"
+
+
+def test_seller_without_keys_does_not_use_ma_cqt(tmp_path):
+    inv = {"nbmst": "0300954529", "tt_khac": {}, "ma_cqt": "00AB", "xml_path": str(tmp_path / "x.xml")}
+    assert vnpt.VnptAdapter.fkey(inv) == ""
+
+
+def test_branch_matches_parent_mst_but_exact_wins():
+    petro_cn = {"nbmst": "0300555450-001",
+                "nbten": "CHI NHÁNH XĂNG DẦU SÀI GÒN - CÔNG TY XĂNG DẦU KHU VỰC II TNHH MỘT THÀNH VIÊN"}
+    assert vnpt.VnptAdapter.portal_for(petro_cn) == "https://hoadon.petrolimex.com.vn"
+    # SW chi nhánh 1 (BKAV) không được khớp sang cổng của chi nhánh 2; MST mẹ cũng không
+    assert vnpt.VnptAdapter.portal_for({"nbmst": "0313894637-001"}) is None
+    assert vnpt.VnptAdapter.portal_for({"nbmst": "0313894637"}) is None
+
+
+def test_golf_downloads_with_extra_code(monkeypatch, captcha_ok):
+    calls = []
+    _router(monkeypatch, [(m, f, r) for m, f, r in _routes(_found(), pdf=_pdf_with("So 24387"))], calls)
+    assert vnpt.VnptAdapter().fetch_pdf(GOLF).startswith(b"%PDF")
+    search = [kw["data"] for m, u, kw in calls if u.endswith("/HomeNoLogin/SearchByFkey")]
+    assert search[0]["strFkey"] == "R20260505-0079"
+    assert all(u.startswith("https://golflongthanh-tt78.") for m, u, kw in calls)
+
+
+def test_low_confidence_captcha_fetches_new_one(monkeypatch):
+    answers = [PdfFetchError("Model không chắc captcha", "captcha"), "1234"]
+
+    def solve(img, group, min_conf):
+        assert group == "g_80x30"
+        a = answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+    monkeypatch.setattr(vnpt, "solve_captcha", solve)
+    calls = []
+    _router(monkeypatch, _routes(_found()), calls)
+    assert vnpt.VnptAdapter().fetch_pdf(INV).startswith(b"%PDF")
+    assert sum(u.endswith("/Captcha/Show") for m, u, kw in calls) == 2
+    assert sum(u.endswith("/HomeNoLogin/SearchByFkey") for m, u, kw in calls) == 1   # không gửi bừa
