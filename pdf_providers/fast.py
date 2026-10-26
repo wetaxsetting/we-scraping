@@ -22,6 +22,7 @@ Mã nhận HĐ = KeySearch trong TTKhac của XML (parser lưu ở tt_khac["KeyS
 from __future__ import annotations
 
 import base64
+import re
 import time
 
 from . import register
@@ -30,6 +31,8 @@ from .common import check_pdf_is_invoice, is_pdf, new_session, request
 
 BASE = "https://einvoice.fast.com.vn"
 HANDLER = f"{BASE}/AppHandler/EInvoiceQuery.ashx"
+# "... hóa đơn điện tử số 5470" / "(... E-Invoices No. 297)"
+_SUBJECT_NO_RE = re.compile(r"(?i)(?:h[oó]á? đơn[^\n]{0,30}?\bsố|\bE-?Invoices? No\.)\s*:?\s*0*(\d{1,8})\b")
 
 
 class FastAdapter(PdfAdapter):
@@ -46,12 +49,18 @@ class FastAdapter(PdfAdapter):
                    or invoice.get("ma_tra_cuu") or "").strip()
 
     def invoice_from_link(self, url: str, code, mail_text: str):
-        """Link mail FAST: einvoice.fast.com.vn/?c=<KeySearch thô>. Chỉ đọc tham số, không mở link."""
+        """Link mail FAST: einvoice.fast.com.vn/?c=<KeySearch thô>. Chỉ đọc tham số, không mở link.
+        Số HĐ (bắt buộc cho t=4) lấy từ tiêu đề mail: "Thông báo phát hành hóa đơn điện tử số 297".
+        Đọc nhầm số thì check_pdf_is_invoice chặn, không ghi nhầm PDF."""
         from .common import link_params
         key = (link_params(url).get("c") or (code or "")).strip().replace(" ", "+")
         if not key:
             return None
-        return {"ma_tra_cuu": key, "tt_khac": {"KeySearch": key}}
+        inv = {"ma_tra_cuu": key, "tt_khac": {"KeySearch": key}}
+        m = _SUBJECT_NO_RE.search(mail_text or "")
+        if m:
+            inv["shdon"] = m.group(1)
+        return inv
 
     def fetch_pdf(self, invoice: dict) -> bytes:
         key = self.lookup_code(invoice)

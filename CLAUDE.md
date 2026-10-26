@@ -429,7 +429,7 @@ Các adapter dưới đây đã thử thật trên XML thật (10/2026):
 | `xcyber`         | CyberLotus (xcyber/cyberbill) | 0105232093 | TTKhac `MaTraCuu` (12/15 ký tự) | `g_300x75` (server có kiểm; 38/38 câu trả lời được nhận). 2 hệ thống: bill2app trước, không thấy thì bill1app. Thật 1/3 — 2 HĐ 2023 hệ thống 1 báo "Lỗi phát sinh" (lỗi phía NCC, để `server` thử lại) |
 
 | `thaison`        | Thái Sơn (einvoice.vn, einvoice.mmvietnam.com) | 0101300842 | TTKhac "Mã TC"; cổng theo TTKhac "DC TC"/`lookup_url`, không có thì `SELLER_PORTALS` (MM, Jollibee, Kiến An), rồi cổng chung einvoice.vn | `g_200x70` (server có kiểm, 19/22 = 86%); cần header `Referer` không thì ra ảnh lỗi. **Lấy được đa số người bán — riêng Grab không lấy được (lấy qua mail).** Thật 14/14. Cổng riêng thêm 23/10 (host lấy từ dòng "tra cứu tại (Tracking)" in trên PDF): Cổng Vàng `vat.ggg.com.vn` (`g_200x70`, 3/3), KFC `invoice.kfcvietnam.com.vn` (bỏ `www.`, 2/2) và Zalo `invoice.zaloplatforms.vn` (2/2) dùng `/Captcha` 200x60 6 ký tự **phân biệt hoa/thường** → ddddocr + sửa case theo hình dạng (`solve_img_captcha`, server nhận 44/51), Diệu Phúc/CellphoneS `hddt.cellphones.com.vn` (captcha sinh bằng JS, server không kiểm, 2/2). Grab 0312650437 → `no_portal` ngay: HĐ 2025 có trên cổng HILO nhưng tải trả 400, HĐ 2023–24 không cổng nào có |
-| `fast`           | FAST (einvoice.fast.com.vn) | 0100727825 | TTKhac `KeySearch` (base64 vào `p`) + `n`=số HĐ | bước tải PDF (`t=4`) **không kiểm captcha** (chỉ bước xem `t=2` kiểm). Thật 6/6 |
+| `fast`           | FAST (einvoice.fast.com.vn) | 0100727825 | TTKhac `KeySearch` (base64 vào `p`) + `n`=số HĐ | bước tải PDF (`t=4`) **không kiểm captcha** (chỉ bước xem `t=2` kiểm). Thật 6/6. Link mail `?c=<KeySearch>`: số HĐ lấy từ tiêu đề mail ("…hóa đơn điện tử số 5470"), sửa 23/10 sau khi 76 link báo `no_code` |
 | `vnisc`          | VNISC (invoice.abcsys.vn) | 0102331762 | TTKhac `MTCuu` | ảnh 100x46, 6 chữ số → **ddddocr** 20/20 (không cần model). Thật 10/10 |
 | `smartsign`      | VI NA / SmartSign (tracuuhd.smartsign.com.vn) | 0309612872 | TTKhac `Matracuu` | ảnh 150x39 phân biệt hoa/thường → ddddocr sau khi lọc sọc đỏ 54/60. Thật 4/4; người bán 0304892753 (2024) ghi `Matracuu` trong XML khác mã in trên PDF → `no_pdf`; HĐ 2023 không có TTKhac → `no_code` |
 | `pavietnam`      | P.A Việt Nam (hoadon.pavietnam.vn, **không phải** tracuu.hoadon30s.vn) | 0302431595 | mã 13–14 chữ hoa **chỉ có trên PDF/mail**, XML không có → HĐ chỉ có XML ra `no_code` | ddddocr 40/40 sau xử lý ảnh; tường lửa SafeLine chặn `new_session` (cipher cũ) nên dùng session `requests` mặc định. Thật 7/7 bằng mã từ mail |
@@ -443,7 +443,8 @@ Các adapter dưới đây đã thử thật trên XML thật (10/2026):
   MST công ty mẹ → tên; nhờ đó Xăng dầu Sài Gòn 0300555450-001 vào cổng Petrolimex (2/2).
 - HILO Kim Đại Phát 3603526528 (`tracuuhddt78.hilo.com.vn`, 3/3): form tra có reCAPTCHA v3 nên không dùng; tải qua
   `/Invoice/getinvoice?token=base64(mẫu:ký hiệu:số:MST bán)` — đúng link HILO gửi trong mail. Với người bán trong
-  `LEGACY_SELLERS` adapter **tự dựng token từ XML** (chờ user xác nhận có giữ không; bỏ thì chỉ còn đường link mail).
+  `LEGACY_SELLERS` adapter **tự dựng token từ XML**, đồng thời nhận link mail `getinvoice` / `ViewFromEmail`
+(`invoice_from_link`) — user chọn giữ cả 2 đường (23/10). Người bán mới dùng cổng này: thêm MST vào `LEGACY_SELLERS`.
   `tt78hd.hilo.com.vn` dùng token kiểu khác (`1_C23TIH_927|MST`), chưa làm.
 
 `pdf_providers/ocr_ddddocr.py`: nạp ddddocr dùng chung (ddddocr 1.6 `set_ranges` làm hỏng kết quả → mỗi adapter tự lọc ký tự).

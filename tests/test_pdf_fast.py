@@ -129,6 +129,17 @@ def test_invoice_from_link():
     assert a.invoice_from_link("https://einvoice.fast.com.vn/", "CODE1", "")["ma_tra_cuu"] == "CODE1"
 
 
+@pytest.mark.parametrize("subject,shdon", [
+    ("CÔNG TY CỔ PHẦN VCCORP : Thông báo phát hành hoá đơn điện tử số 5470 ", "5470"),
+    ("Fast e-Invoice: Thông báo phát hành hóa đơn điện tử số 297 (Notification on Issuing E-Invoices No. 297)", "297"),
+    ("Notification on Issuing E-Invoices No. 0004800", "4800"),
+    ("Thông báo hóa đơn", None),
+])
+def test_invoice_from_link_takes_number_from_subject(subject, shdon):
+    got = fast.FastAdapter().invoice_from_link("https://einvoice.fast.com.vn/index.aspx?c=" + KEY, None, subject)
+    assert got.get("shdon") == shdon
+
+
 def test_declares_mst_tcgp():
     a = fast.FastAdapter()
     assert a.source_id == "fast" and a.mst_tcgp == ("0100727825",)
