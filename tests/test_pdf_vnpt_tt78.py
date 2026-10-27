@@ -327,3 +327,37 @@ def test_low_confidence_captcha_fetches_new_one(monkeypatch):
     assert vnpt.VnptAdapter().fetch_pdf(INV).startswith(b"%PDF")
     assert sum(u.endswith("/Captcha/Show") for m, u, kw in calls) == 2
     assert sum(u.endswith("/HomeNoLogin/SearchByFkey") for m, u, kw in calls) == 1   # không gửi bừa
+
+
+# --- Link mail Petrolimex (cổng riêng dạng SearchInvoicebycode) -----------------------
+
+PETRO = "https://hoadon.petrolimex.com.vn"
+PETRO_SUBJECT = "Thông báo phát hành CHI NHÁNH XĂNG DẦU SÀI GÒN - CÔNG TY XĂNG DẦU KHU VỰC II TNHH MỘT THÀNH VIÊN"
+
+
+def test_petrolimex_link_host_and_code():
+    assert pdf_providers.adapter_for_host("hoadon.petrolimex.com.vn").source_id == "vnpt"
+    a = vnpt.VnptAdapter()
+    inv = a.invoice_from_link(PETRO, "AB12CDEFG*", f"{PETRO_SUBJECT}\nAB12CDEFG*")   # mã giả, giữ dấu *
+    assert inv == {"ma_tra_cuu": "AB12CDEFG*", "tt_khac": {"Fkey": "AB12CDEFG*"}, "lookup_url": PETRO}
+    assert "nbmst" not in inv                      # mail của cả công ty mẹ lẫn chi nhánh -001: không đoán
+    assert a.portal_for(inv) == PETRO and a.fkey(inv) == "AB12CDEFG*"
+    # mã chỉ có trong mail_text (dòng sau tiêu đề)
+    assert a.invoice_from_link(f"{PETRO}/", None, f"{PETRO_SUBJECT}\nAB12CDEFG*")["ma_tra_cuu"] == "AB12CDEFG*"
+    assert a.invoice_from_link(PETRO, None, PETRO_SUBJECT) is None                     # không có mã
+
+
+def test_petrolimex_link_fetch_uses_search_form(monkeypatch):
+    a = vnpt.VnptAdapter()
+    seen = []
+    monkeypatch.setattr(a, "_search", lambda base, fkey: seen.append((base, fkey)) or "CHK")
+    monkeypatch.setattr(a, "_render", lambda base, code, inv: seen.append((base, code)) or b"%PDF")
+    inv = a.invoice_from_link(PETRO, "AB12CDEFG*", PETRO_SUBJECT)
+    assert a.fetch_pdf(inv) == b"%PDF"
+    assert seen == [(PETRO, "AB12CDEFG*"), (PETRO, "CHK")]
+
+
+def test_portal_by_lookup_url_only_known_hosts():
+    assert vnpt.VnptAdapter.portal_for({"lookup_url": "https://hoadon.petrolimex.com.vn/"}) == PETRO
+    assert vnpt.VnptAdapter.portal_for({"lookup_url": "https://hoadon.petrolimex.com.vn.evil.vn/"}) is None
+    assert vnpt.VnptAdapter().invoice_from_link("https://evil.vn/", "AB12CDEFG*", "") is None

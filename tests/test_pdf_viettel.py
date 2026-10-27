@@ -138,3 +138,34 @@ def test_lookup_code_tolerates_unicode_forms():
 def test_registered_for_mst_tcgp():
     assert pdf_providers.get_adapter("viettel").mst_tcgp == ("0100109106",)
     assert pdf_providers.adapter_for_mst_tcgp("0100109106").source_id == "viettel"
+
+
+# --- Link mail S-Invoice cũ: trang chủ + mã bí mật, MST theo tên người bán ở tiêu đề ---------
+
+def test_sinvoice_hosts_registered():
+    for host in ("www.sinvoice.vn", "sinvoice.viettel.vn", "vinvoice.viettel.vn"):
+        assert pdf_providers.adapter_for_host(host).source_id == "viettel"
+
+
+def test_invoice_from_link_old_sinvoice_mail():
+    a = viettel.ViettelAdapter()
+    inv = a.invoice_from_link("https://www.sinvoice.vn/", "AB12CD34EF56GH7",
+                              "HDDT -  CÔNG TY TNHH AN YANG VIỆT NAM\nAB12CD34EF56GH7")   # mã giả
+    assert inv == {"nbmst": "0318949262", "ma_tra_cuu": "AB12CD34EF56GH7",
+                   "tt_khac": {"Mã số bí mật": "AB12CD34EF56GH7"}}
+    assert a.lookup_code(inv) == "AB12CD34EF56GH7"
+
+
+@pytest.mark.parametrize("url, code, text", [
+    ("https://www.sinvoice.vn/", "AB12CD34EF56GH7", "HDDT - CÔNG TY TNHH CHƯA BIẾT"),   # người bán chưa có MST
+    ("https://sinvoice.viettel.vn/tracuuhoadon", None, "CÔNG TY TNHH AN YANG VIỆT NAM"),  # không có mã
+    ("https://www.sinvoice.vn/", "SHORT", "CÔNG TY TNHH AN YANG VIỆT NAM"),               # không phải mã 15 ký tự
+])
+def test_invoice_from_link_old_sinvoice_unusable(url, code, text):
+    assert viettel.ViettelAdapter().invoice_from_link(url, code, text) is None
+
+
+def test_invoice_from_link_vinvoice_params_still_win():
+    inv = viettel.ViettelAdapter().invoice_from_link(
+        "https://vinvoice.viettel.vn/tracuu?tax-code=0313592114&secret-code=UY0U5AFNXKNIXN3", None, "")
+    assert inv["nbmst"] == "0313592114" and inv["ma_tra_cuu"] == "UY0U5AFNXKNIXN3"

@@ -9,3 +9,4 @@ PyMuPDF>=1.24             # kiểm tra PDF tải về có đúng số hóa đơn
 playwright>=1.40          # VNPT: cổng tra cứu không có PDF trên server
 skia-python>=87           # GDT: captcha dạng SVG → PNG
 ddddocr>=1.4              # HILO/Grab: captcha SVG không khớp nhóm model nào của ta
+lxml>=5.0                 # Online VI NA: dựng PDF từ XML + XSLT của người bán

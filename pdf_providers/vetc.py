@@ -18,10 +18,15 @@ Mã tra cứu: TTKhac "Mã tra cứu" (9-13 ký tự).
 sau ngày lập, cả tra theo mã vé). VETC chỉ cho xem trong app (Lịch sử → Bãi đỗ). Chưa
 tìm được cổng công khai → HĐ của 0106858609 không thấy thì ném 'no_portal' (nằm chờ,
 không tốn lượt), còn 0107500414 thì 'no_pdf' (thử lại hằng ngày).
+
+Mail VETC (kiểm 26/10): link trang chủ tracuuhoadon.vetc.com.vn + "Mã tra cứu" 12 ký tự (vd EJoLM6NUHqXJ),
+tiêu đề "Thông báo phát hành hóa đơn – Số hóa đơn #80957898" → invoice_from_link (không mở link).
+Mail không có mã (bản forward mất nội dung) → None.
 """
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 
 from . import register
@@ -33,12 +38,27 @@ MST_TCGP_TNHH = "0107500414"     # tự phát hành, HĐ có trên cổng tra c�
 MST_TCGP_CP = "0106858609"       # HĐ bãi đỗ — chưa có cổng công khai
 
 _NOT_FOUND = "không tìm thấy hóa đơn"
+_CODE_RE = re.compile(r"^[A-Za-z0-9]{8,16}$")          # phân biệt hoa thường → không đổi case
+_SUBJECT_NO_RE = re.compile(r"s[ốo]\s*h[óo]a\s*[đd][ơo]n\s*#\s*0*(\d{1,10})", re.I)
 
 
 class VetcAdapter(PdfAdapter):
     source_id = "vetc"
     name = "VETC"
     mst_tcgp = (MST_TCGP_TNHH, MST_TCGP_CP)
+    hosts = ("tracuuhoadon.vetc.com.vn",)
+
+    def invoice_from_link(self, url: str, code, mail_text: str):
+        """Link trang chủ cổng tra cứu + mã tra cứu trong mail (+ số HĐ ở tiêu đề). Không mở link."""
+        code = (code or "").strip()
+        if not _CODE_RE.match(code):
+            return None
+        inv = {"nbmst": MST_TCGP_TNHH, "mst_tcgp": MST_TCGP_TNHH, "ma_tra_cuu": code,
+               "tt_khac": {"Mã tra cứu": code}}
+        m = _SUBJECT_NO_RE.search(((mail_text or "").splitlines() or [""])[0])
+        if m:
+            inv["shdon"] = int(m.group(1))
+        return inv
 
     @staticmethod
     def lookup_code(invoice: dict) -> str:

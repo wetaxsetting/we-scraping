@@ -136,3 +136,28 @@ def test_errors(monkeypatch, search, download, kind):
     with pytest.raises(PdfFetchError) as ei:
         vetc.VetcAdapter().fetch_pdf(dict(INV))
     assert ei.value.kind == kind
+
+
+# --- Link mail: trang chủ + mã tra cứu, số HĐ ở tiêu đề -------------------------------
+
+def test_invoice_from_link_mail(monkeypatch):
+    a = pdf_providers.adapter_for_host("tracuuhoadon.vetc.com.vn")
+    assert a.source_id == "vetc"
+    inv = a.invoice_from_link("https://tracuuhoadon.vetc.com.vn", CODE,
+                              f"[VETC] Thông báo phát hành hóa đơn – Số hóa đơn #80957898\n{CODE}")
+    assert inv["ma_tra_cuu"] == CODE and inv["shdon"] == 80957898 and inv["nbmst"] == "0107500414"
+    assert a.lookup_code(inv) == CODE
+    calls = []
+    _router(monkeypatch, _routes(_Resp(text=FOUND)), calls)
+    assert a.fetch_pdf(inv).startswith(b"%PDF")
+    with pytest.raises(PdfFetchError):                       # PDF phải đúng số HĐ ở tiêu đề
+        a.fetch_pdf(dict(inv, shdon=12345))
+
+
+def test_invoice_from_link_leading_zero_and_no_number():
+    a = vetc.VetcAdapter()
+    assert a.invoice_from_link("https://tracuuhoadon.vetc.com.vn", CODE,
+                               "Thông báo phát hành hóa đơn – Số hóa đơn #01407840")["shdon"] == 1407840
+    assert "shdon" not in a.invoice_from_link("https://tracuuhoadon.vetc.com.vn", CODE, "FW: hóa đơn")
+    assert a.invoice_from_link("https://tracuuhoadon.vetc.com.vn", None, "Số hóa đơn #80957898") is None
+    assert a.invoice_from_link("https://tracuuhoadon.vetc.com.vn", "ab cd!", "") is None

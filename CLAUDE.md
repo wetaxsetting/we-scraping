@@ -103,6 +103,14 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
   `CodeStyle` chỉ có `Alphanumeric/Alpha/Numeric`, không có công tắc hoa/thường; `AutoUppercase`/
   `AutoLowercase` là chuẩn hóa ô nhập, tức BotDetect vốn kiểm case-insensitive).
   Exe trong `bin/` có thể cũ hơn `Program.cs` — build lại bằng MSBuild của VS 2022 trước khi dùng.
+- **Generator BotDetect có thể để lại PNG 0 byte** (gặp 26/10 ở `g_250x40/093767_UTWED.png`, 1/106.773 ảnh).
+  `Program.cs` gọi `Bitmap.Save(filePath)`: GDI+ tạo file trước, lỗi giữa chừng thì file rỗng nằm lại, còn
+  exception bị `catch` nuốt thành `errors++`. Train sẽ chết ở `scan_index` với `UnidentifiedImageError`.
+  Sau mỗi đợt sinh: `Get-ChildItem env\<nhóm> -Filter *.png -File | Where-Object Length -eq 0 | Remove-Item`.
+- **Thư viện BotDetect không giải được captcha của site dùng nó** (hỏi 26/10 cho VDSG/`g_250x40`).
+  `CaptchaBase` chỉ có `GetCode` / `GetImage` / `GetSound` / `Validate`; không có hàm ảnh → chữ.
+  Mã captcha sinh và lưu trong session **phía server của site**, nên cầm DLL ở máy mình không đọc được.
+  Thư viện chỉ giúp được một việc: sinh dữ liệu train cùng bộ render. Giải vẫn phải bằng OCR (model / ddddocr).
 - **Trước khi sinh data, kiểm nguồn data cũ của nhóm đó bằng vân tay PNG** (mode + chunks + cỡ file):
   ảnh cào từ site, ảnh BotDetect và ảnh lưu lại qua PIL khác nhau rõ. Nhầm nguồn dẫn tới chẩn đoán sai
   (xem `g_180x50_vn` ở 1.5).
@@ -141,7 +149,8 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
 | `g_120x40_cloud`                              | Cloudteam                                                                                                  | 94,7%  | OK                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `g_194x35`                                    | PVOIL                                                                                                      | 91,8%  | OK                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `g_180x64`                                    | —                                                                                                          | 75,2%  | Cần thêm dữ liệu                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `g_70x23`, `g_250x40`, `g_200x80`, `g_150x39` | Bitware, VDSG, Ngô Gia Phát, SmartSign                                                                     | 2–24%  | Chưa dùng được                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `g_150x39`                                    | SmartSign (adapter đang dùng ddddocr, xem 2.6)                                                             | 2,3%   | **26/10 sửa nhãn tay + bảng chữ 33 ký tự, chờ train lại** (2,3% là bản cũ, nhãn sai). Xem 1.5 mục 7                                                                                                                                                                                                                                                                                                      |
+| `g_70x23`, `g_250x40`, `g_200x80`             | Bitware, VDSG, Ngô Gia Phát                                                                                | 2–24%  | Chưa dùng được. `g_250x40` (VDSG) dùng thư viện BotDetect, nhưng thư viện này **không giải được captcha**, xem 1.3                                                                                                                                                                                                                                                                                                         |
 | `g_150x30`, `g_160x75`                        | ASIA, hoadon30s                                                                                            | 0%     | Chưa từng học được                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## 1.5 Kế hoạch train (theo ưu tiên)
@@ -236,6 +245,21 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
    khi thu thập mẫu train nhóm riêng (PHẦN 2, mục 2.6).
 5. `g_100x30` mới (FAST, einvoice.fast.com.vn): 5 ký tự hoa/thường lẫn lộn, cần nhiều mẫu.
 6. Các nhóm < 25%: làm khi phát sinh hóa đơn thật từ NCC đó.
+7. `g_150x39` (SmartSign, captcha 3–4 ký tự, sọc chéo đỏ). **Sửa nhãn tay 26/10, chờ train lại.**
+   Nhãn cũ do ddddocr đọc trên **ảnh thô còn sọc đỏ** nên hay **sót nét mảnh `l 1 j i`** ở đầu/cuối chuỗi
+   (`lx51→x5`, `j1j1→j1`, `cctl→cc`): soi 20 ảnh nhãn 2 ký tự thì 18 ảnh sai. Đọc lại bằng bộ lọc sọc của
+   adapter (`smartsign.clean_captcha`) ở 4 ngưỡng, chỉ nhận khi cả 4 khớp: đúng ~77%, phần sai vẫn là sót
+   `1`/`l`, vì lỗi này lặp lại ở mọi ngưỡng nên so khớp không bắt được → **soi tay cả 3.253 ảnh nhãn 2–3 ký tự**.
+   Kết quả: giữ 1.241, đổi tên 1.870, 142 ảnh không đọc chắc + 294 ảnh nhãn 1 ký tự → `env/g_150x39_review/`
+   (không xóa). Nhật ký: `env/g_150x39/relabel_150x39_20261026.csv`, `drop_len1_20261026.csv`; tên gốc:
+   `filenames_snapshot_20261026.txt`. **Bảng chữ thật 33 ký tự** `12345678abcdefghijklmnopqrstuvwxy`
+   (không có `0 9 z`, không chữ hoa: trên 13.308 nhãn mấy ký tự này chỉ 22–59 lần = nhiễu), config đã sửa
+   (bản cũ `configs/groups.yaml.bak_20261026`). Nạp thử: train/val/test 10.218/1.277/1.277, ~1.197 mẫu/ký tự,
+   `fixed` tự bỏ 100 ảnh có ký tự ngoài bảng. **Chưa soi ~11.200 ảnh nhãn 4 ký tự** → số test có thể thấp hơn
+   thực tế; muốn chắc thì đo trên captcha thật tải từ SmartSign. Lệnh:
+   `python -X utf8 -m captcha.train --group g_150x39 --data-dir env/g_150x39 --epochs 60`
+   (cất `runs/g_150x39` cũ trước hoặc thêm `--force`). Train xong, nếu hơn ddddocr (server nhận 54/60)
+   thì đổi adapter `smartsign` sang `solve_captcha(..., "g_150x39")`.
 
 Train xong 1 nhóm của NCC đã có cổng: cập nhật adapter tương ứng ở PHẦN 2 (mục 2.6).
 
@@ -291,7 +315,9 @@ python -X utf8 web/main_auto.py --from 2026-08-01 --to 2026-09-30 [--company MST
 ```
 
 `web/main_auto.py` (từ 14/10) **ghi thẳng vào DB** qua đúng các hàm của job (`sync_lists` với
-`move_cursor=False`, `process_xml`, tùy chọn `process_pdf`). Không còn ghi `hoa_don.json` /
+`move_cursor=False`, `process_xml`, tùy chọn `process_pdf`). Khoảng dài tự chia đoạn ≤ 30 ngày (giới hạn GDT,
+`split_range`, `--chunk-days`), **mỗi đoạn lấy danh sách rồi tải XML luôn**; đoạn lỗi không chặn đoạn sau và được in
+ra cuối lượt (`stats.failed_chunks`) để chạy lại riêng (26/10). Không còn ghi `hoa_don.json` /
 `hoa_don_chitiet.json`; `--excel` xuất từ DB. Ghi `job_runs.command='manual'`.
 Thư mục cũ `output/xml/1201496252-U002/` và 2 file JSON là của bản cũ (đặt theo username) và có thể xóa.
 Khi chạy `fetch_pdf.py` luôn thêm `--company 1201496252`.
@@ -436,6 +462,20 @@ Các adapter dưới đây đã thử thật trên XML thật (10/2026):
 
 | `express247`     | 247Express / CTCP Hai Bốn Bảy (người bán 0304043037, cổng riêng hoadon.247express.vn) | — (HĐ hthdon=2, không có XML) | mã 24 ký tự **chỉ từ link mail** → `GET /service/api/Invoice/DownloadFilePDF/<mã>` | không (form tra trên web có reCAPTCHA nên không dùng, không lấy XML). Thật 8/8 (23/10), khớp HĐ qua `_match_pdf_text` |
 
+| `evat`           | Phương Nam (phuongnam.evat.vn, nền eVAT) | 0316642395 | TTKhac "Mã tra cứu hóa đơn" + "Mã công ty" (thiếu thì `nbmst`) → POST `/bill` (CSRF) → ZIP có PDF + XML ký số | không. Thật 4/4 PDF + XML (26/10). `PORTALS` MSTTCGP → subdomain: hoadonsovn/tvl/vlc/trandinhtung.evat.vn cùng form, thêm khi có HĐ thật. `tracuu.evat.vn` nay chuyển sang wininvoice (0312303803), không thuộc adapter này |
+| `matbao`         | Mắt Bão (matbao.in) | 0302712571 | XML không có mã → API của cổng `GET /api/tra-cuu-hoa-don/fkey?taxcode=&pattern=&serial=&no=` → Fkey → `pdfUrl`/`xmlUrl` | trang có widget reCAPTCHA v2 nhưng **server không kiểm** (gửi không token vẫn trả bình thường); adapter không gửi token, gặp 403 → `no_portal`. Thật 2/2 + 1 qua mã mail. PDF dựng lại theo mẫu hiện tại (khác nhẹ bố cục so với PDF mail) |
+| `onlinevina`     | Online VI NA (hoadon.onlinevina.com.vn) | 0314185087 | TTKhac `SearchInvoice` (24 hex) → `POST /api/v1/invoice/invoice/view` | không. **Server không có PDF** (trang dựng bằng html2pdf) → adapter áp XSLT của người bán bằng lxml (cấm đọc file/mạng), bỏ JS, render bằng `render.html_to_pdf`; chặn PDF trắng. Chữ trùng 100% PDF mail, thiếu viền bảng/watermark. Thật 1/1 |
+| `vininvoice`     | VININVOICE (tracuu.vininvoice.vn) | 0109282176 | `ma_tra_cuu`/TTKhac, không có thì MCCQT → `/erp/rest/s1/iam-entry/invoices/<mã>/pdf` (cùng phần mềm `myinvoice`) | không. Thật 3/3, chữ trùng PDF mail |
+
+| `wininvoice`     | WinInvoice / Win Tech (tracuu.wininvoice.vn; `tracuu.evat.vn` chuyển về đây) | 0312303803 | như `evat` (kế thừa `EvatAdapter`): TTKhac "Mã tra cứu hóa đơn" + "Mã công ty" (bắt buộc) | không. Thật 6/6 (26/10). Mail chỉ có mã, không có mã công ty → link thường `ignored` (mail đã kèm PDF/XML); giá trị chính là HĐ từ XML Thuế |
+| `rosysoft`       | Rosy Soft ROSY_ERP (einv.rosysoft.vn:8386) — người bán Ánh Dương/Vinasun 0302035520 | 0305142231 | `TaxCode`+`InvID` (link mail) hoặc `TaxCode`+`InvSerial`+`InvNo` → lưới trả `PINCode` → PDF base64 + XML ký số | không. Thật 26/26 (24 link mail + 2 HĐ trong DB). HĐ Vinasun là hthdon=2, không có XML → không có task PDF tự động; lấy qua link mail |
+| `asiainvoice`    | ASIA / A-Invoice (asiainvoice.vn, tracuu./tt78.) | 0101162173 | FKey = "Mã tra cứu" **chỉ có trong mail** (XML Thuế không có → `no_code`) → `POST /tra-cuu {FKey, Captcha}` → PDF base64; XML qua `/tra-cuu/downloadxml` cùng phiên | ảnh 150x30 5 ký tự → ddddocr + `.upper()`, server nhận 11/15, thử tối đa 6 lần. Thật 2/2 |
+| `fahasa`         | Fahasa (hoadon.fahasa.com, người bán 0304132047) — **FPT tự host** | — (không khai 0104128565 vì cổng FPT chung có reCAPTCHA) | link mail `sec=<mã>`, số HĐ từ tiêu đề → `/api/seek/search1?...&token=` | bản cài này không bật reCAPTCHA (`captchaType` không đặt), token rỗng được nhận 5/5. Thật 5/5 PDF + XML |
+
+Không làm (26/10): `einvoice.com.vn` / `hoadon.ftg.vn` là Thái Sơn (cổng riêng yeungkyung., lotterentacarvina.einvoice.com.vn —
+mail đã kèm file; link `/xac-nhan-email/` **không bao giờ mở**); ameinvoice.vn (1 mail, đã kèm PDF); e-invoice-tt78.vingroup.net
+(tra cần MST + mẫu + ký hiệu + số + mã bí mật + captcha, mail không đủ thông tin).
+
 **Cổng riêng người bán thêm 23/10** (tìm từ dòng "Tra cứu hóa đơn tại website" in trên PDF trong mail):
 - VNPT `-tt78` (luồng tt78 + `g_80x30`; đọc captcha độ tin thấp thì xin ảnh mới thay vì gửi bừa): Golf Long Thành
   3600718503 (TTKhac `Extra`, thiếu thì MCCQT, 6/6), SW F&B CN2 0313894637-002 (MCCQT, 6/6), Navigos 0304836029
@@ -445,7 +485,7 @@ Các adapter dưới đây đã thử thật trên XML thật (10/2026):
   `/Invoice/getinvoice?token=base64(mẫu:ký hiệu:số:MST bán)` — đúng link HILO gửi trong mail. Với người bán trong
   `LEGACY_SELLERS` adapter **tự dựng token từ XML**, đồng thời nhận link mail `getinvoice` / `ViewFromEmail`
 (`invoice_from_link`) — user chọn giữ cả 2 đường (23/10). Người bán mới dùng cổng này: thêm MST vào `LEGACY_SELLERS`.
-  `tt78hd.hilo.com.vn` dùng token kiểu khác (`1_C23TIH_927|MST`), chưa làm.
+  `tt78hd.hilo.com.vn` dùng token kiểu khác (`1_C23TIH_927|MST`) — làm 26/10 (`decode_tt78hd_token`, link mail 2/2).
 
 `pdf_providers/ocr_ddddocr.py`: nạp ddddocr dùng chung (ddddocr 1.6 `set_ranges` làm hỏng kết quả → mỗi adapter tự lọc ký tự).
 Kiểm chứng 23/10 đều bằng HĐ thật của công ty; PDF lấy được trùng nội dung với PDF đã có từ mail.
@@ -520,6 +560,13 @@ tham số link / mã trong mail, **không mở link**; `fetch_pdf` (và `fetch_x
 form nên không đụng reCAPTCHA; thật 8/8; link trang chủ / `Login?AGUID=` → `ignored`). Lượt `mail` đầu sau khi thêm sẽ
 xử lý ~400 link BKAV một lúc (2–3 request/link). M-Invoice: link trong mail chỉ là link theo dõi Mailgun / trang chủ,
 không có khóa HĐ (124/126 mail đã kèm sẵn PDF+XML) → không làm.
+Thêm host 26/10: `hoadon.petrolimex.com.vn` → `vnpt` (mã = Fkey, thật 5/5); `tracuuhoadon.vetc.com.vn` → `vetc` (mã 12 ký tự
+phân biệt hoa/thường + số HĐ từ tiêu đề, 4/4); `sinvoice.vn`/`sinvoice.viettel.vn` → `viettel` (link chỉ là trang chủ, API cần
+MST bán mà tiêu đề chỉ có **tên** → bảng `MAIL_SELLERS` tên → MST, hiện chỉ An Yang 0318949262, 11/11); `tt78hd.hilo.com.vn`
+→ `hilo`. Chỉ nhận host để đánh `ignored`: `hoadon.thaco.com.vn` (27 link cùng 1 URL cố định ở chân mail → 1 HĐ 2019) và
+`tracking.hilo.com.vn` (link đếm click quảng cáo). **`invoice_from_link` trả None = link `ignored` vĩnh viễn**: thêm người bán vào
+`MAIL_SELLERS` thì phải đặt lại link cũ về `new` bằng tay. Chưa làm: `0105987432999hd.softdreams.vn` (PINK HEO, host chết,
+cổng EasyInvoice cần MST người bán chưa biết).
 
 ## 2.7 Mail hóa đơn (`mail_reader.py`, `mail_ingest.py`)
 

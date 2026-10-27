@@ -290,3 +290,54 @@ def test_invoice_from_link_legacy():
                                "161052071", "") is None
     assert a.invoice_from_link("https://tracking.hilo.com.vn/api.php?x=1", None, "") is None
     assert pdf_providers.adapter_for_host("tracuuhddt78.hilo.com.vn").source_id == "hilo"
+
+
+# --- Cổng cũ tt78hd.hilo.com.vn (token "mẫu_ký hiệu_số|MST") + link tracking ---------------
+
+TT78HD_TOKEN = "MV9DMjNUSUhfOTI3fDAzMDA2NDgyMTg="     # token thật trong mail = "1_C23TIH_927|0300648218"
+
+
+def test_decode_tt78hd_token():
+    assert hilo.decode_tt78hd_token(TT78HD_TOKEN) == {"khmshdon": 1, "khhdon": "C23TIH", "shdon": 927,
+                                                      "nbmst": "0300648218"}
+    assert hilo.decode_tt78hd_token(KDP_TOKEN) is None            # kiểu tracuuhddt78, khác
+    assert hilo.decode_tt78hd_token("bad!!") is None
+
+
+def test_invoice_from_link_tt78hd_and_fetch(monkeypatch):
+    a = pdf_providers.adapter_for_host("tt78hd.hilo.com.vn")
+    assert a.source_id == "hilo"
+    for path in ("getinvoice", "ViewFromEmail"):
+        inv = a.invoice_from_link(f"https://tt78hd.hilo.com.vn/Invoice/{path}?token={TT78HD_TOKEN}",
+                                  "e6d3e8d570774ba1b96541ab08b57813", "")
+        assert inv["shdon"] == 927 and inv["nbmst"] == "0300648218" and inv["tt78hd_token"] == TT78HD_TOKEN
+    assert a.invoice_from_link("https://tt78hd.hilo.com.vn", "e6d3e8d570774ba1b96541ab08b57813", "") is None
+    calls = []
+
+    def fake(session, method, url, **kw):
+        calls.append((method, url, kw))
+        return _Resp(content=_pdf_with("So 927"), headers={"Content-Type": "application/pdf"})
+    monkeypatch.setattr(hilo, "request", fake)
+    monkeypatch.setattr(hilo, "new_session", lambda: object())
+    assert a.fetch_pdf(dict(inv)).startswith(b"%PDF")
+    assert calls[0][1] == "https://tt78hd.hilo.com.vn/Invoice/getinvoice"
+    assert calls[0][2]["params"] == {"token": TT78HD_TOKEN} and calls[0][2]["allow_redirects"] is False
+    with pytest.raises(PdfFetchError):                                # PDF phải đúng số HĐ
+        a.fetch_pdf(dict(inv, shdon=928))
+
+
+def test_tt78hd_not_found_is_no_pdf(monkeypatch):
+    monkeypatch.setattr(hilo, "request", lambda s, m, u, **kw: _Resp(status=302, headers={"Location": "/Invoice/Index"}))
+    monkeypatch.setattr(hilo, "new_session", lambda: object())
+    inv = hilo.HiloAdapter().invoice_from_link(f"https://tt78hd.hilo.com.vn/Invoice/getinvoice?token={TT78HD_TOKEN}", None, "")
+    with pytest.raises(PdfFetchError) as ei:
+        hilo.HiloAdapter().fetch_pdf(inv)
+    assert ei.value.kind == "no_pdf"
+
+
+def test_tracking_links_are_claimed_but_ignored():
+    a = pdf_providers.adapter_for_host("tracking.hilo.com.vn")
+    assert a.source_id == "hilo"
+    url = ("https://tracking.hilo.com.vn/api.php?platform=email&position=footer&ad_idx=0&type=$Type"
+           "&taxcode=3603526528&custaxcode=1201496252&req_type=click")
+    assert a.invoice_from_link(url, "873c8c9b-2f76-4ce5-878b-147f8010157d", "") is None

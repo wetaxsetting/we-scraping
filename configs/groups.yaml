@@ -233,7 +233,7 @@ groups:
   sizes:
   - - 150
     - 39
-  charset: 0123456789abcdefghijklmnopqrstuvwxyz
+  charset: 12345678abcdefghijklmnopqrstuvwxy
   charset_mode: fixed
   min_freq: 0.005
   review: false
@@ -242,7 +242,7 @@ groups:
   in_channels: 1
   clahe: false
   clip_above: null
-  note: (150, 39) n=995 len 3-4 drop 3.8% ring_raw 240
+  note: "(150, 39) relabel tay 26/10: 1.870 nhan 2-3 ky tu sua theo anh, 436 anh khong doc duoc chuyen sang env/g_150x39_review. Bang chu that 33 ky tu: khong co 0 9 z, khong co chu hoa"
 - group_id: g_180x50_vn
   sizes:
   - - 180

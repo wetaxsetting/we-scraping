@@ -23,9 +23,16 @@ Captcha của trang là slider ghép mảnh (app-slide-captcha: /einvoiceuaa/api
 Đừng dùng GET .../utility/generatePDF (nút "In"): chỉ trả PDF đã dựng sẵn từ lần
 downloadPDF trước, HĐ chưa ai xem → 200 body rỗng.
 Mọi người bán dùng chung cổng này (không có cổng riêng).
+
+Mail S-Invoice kiểu cũ (kiểm 26/10): link trang chủ www.sinvoice.vn / sinvoice.viettel.vn/tracuuhoadon
+(landing page, không có tham số) + "Mã số bí mật" 15 ký tự; tiêu đề chỉ có TÊN người bán
+("HDDT - CÔNG TY TNHH AN YANG VIỆT NAM"). API bắt buộc MST bán (bỏ trống → HTTP 500 "GENERAL")
+→ MST lấy theo tên trong MAIL_SELLERS; người bán chưa có trong bảng → None (link 'ignored').
+An Yang 0318949262: 11/11 mã tải được, cả 11 PDF đều ghi người mua 1201496252.
 """
 from __future__ import annotations
 
+import re
 import unicodedata
 
 from . import register
@@ -42,6 +49,13 @@ ENDPOINTS = (
 CODE_FIELDS = ("mã số bí mật", "mã bí mật", "mã tra cứu", "reservationcode")
 _NOT_FOUND = ("not_found", "không tìm thấy")
 
+# Mail S-Invoice cũ (www.sinvoice.vn, sinvoice.viettel.vn) chỉ ghi tên người bán → MST.
+# Khóa = chuỗi con của tiêu đề mail (chữ HOA, NFC). Bổ sung khi gặp người bán mới (MST in trên PDF).
+MAIL_SELLERS = {
+    "AN YANG VIỆT NAM": "0318949262",        # thật 11/11 (26/10)
+}
+_SECRET_RE = re.compile(r"^[A-Z0-9]{15}$")
+
 
 def _norm(s) -> str:
     return unicodedata.normalize("NFC", str(s or "")).strip().lower()
@@ -55,15 +69,31 @@ class ViettelAdapter(PdfAdapter):
     source_id = "viettel"
     name = "Viettel S-Invoice"
     mst_tcgp = ("0100109106",)
-    hosts = ("vinvoice.viettel.vn",)
+    hosts = ("vinvoice.viettel.vn", "sinvoice.viettel.vn", "sinvoice.vn")
 
     def invoice_from_link(self, url: str, code, mail_text: str):
-        """Mail Viettel: vinvoice.viettel.vn/tracuu?tax-code=<MST bán>&secret-code=<mã bí mật>."""
+        """
+        Mail Viettel: vinvoice.viettel.vn/tracuu?tax-code=<MST bán>&secret-code=<mã bí mật>.
+        Mail S-Invoice cũ: link trang chủ + mã bí mật trong mail, MST bán theo tên ở tiêu đề (MAIL_SELLERS).
+        """
         p = link_params(url)
         mst, secret = p.get("tax-code"), p.get("secret-code")
+        if not secret:
+            secret = (code or "").strip().upper()
+            if not _SECRET_RE.match(secret):
+                return None
+        if not mst:
+            mst = self.mail_seller(mail_text)
         if not (mst and secret):
             return None
         return {"nbmst": mst, "ma_tra_cuu": secret, "tt_khac": {"Mã số bí mật": secret}}
+
+    @staticmethod
+    def mail_seller(mail_text: str) -> str | None:
+        """MST người bán theo tên ở tiêu đề mail (dòng 1 của mail_text); không chắc → None."""
+        subject = unicodedata.normalize("NFC", ((mail_text or "").splitlines() or [""])[0]).upper()
+        hits = {mst for name, mst in MAIL_SELLERS.items() if name in subject}
+        return hits.pop() if len(hits) == 1 else None
 
     @staticmethod
     def lookup_code(invoice: dict) -> str:

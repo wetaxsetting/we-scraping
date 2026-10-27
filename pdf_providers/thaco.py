@@ -19,6 +19,11 @@ token có trong DownloadPdf, không tự dựng. Token cũng không có bí mậ
 chỉ dùng cho form có captcha. Adapter luôn gọi BASE của mình (chỉ lấy token từ link trong XML).
 
 Khảo sát 23/10/2026 trên HĐ thật của 0313592114 (C25TAD-208, C25TAD-173...) và 0310713219.
+
+Mail "THÔNG TIN HÓA ĐƠN PHÍ QUẢN LÝ ... CĂN HỘ ..." (SALA, 2023–2025, kiểm 26/10): cả 27 mail mang CÙNG MỘT
+link cũ http://hoadon.thaco.com.vn/Invoice/download/?id=<UTF-16 hex của chuỗi mã hóa>&pattern=01GTKT0/001
+— mở tay 1 lần: luôn ra ZIP của 1 HĐ cũ mẫu TT32 (01GTKT0001_QM19E_0004670), không phải HĐ của mail.
+Link cố định ở chân mail, không có khóa HĐ → nhận host để invoice_from_link trả None (link 'ignored').
 """
 from __future__ import annotations
 
@@ -56,7 +61,8 @@ class ThacoAdapter(PdfAdapter):
     source_id = "thaco"
     name = "THACO (hoadondientu.thaco.com.vn)"
     mst_tcgp = ("3600252847",)
-    hosts = ("hoadondientu.thaco.com.vn",)
+    # hoadon.thaco.com.vn: chỉ có link /Invoice/download cố định ở chân mail (xem trên) → None
+    hosts = ("hoadondientu.thaco.com.vn", "hoadon.thaco.com.vn")
 
     # -- mã tra cứu ----------------------------------------------------------
 

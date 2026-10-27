@@ -50,6 +50,11 @@ Nhiều người bán -tt78 KHÔNG ghi Fkey vào XML; "Mã tra cứu" in trên P
 (Golf Long Thành: TTKhac "Extra"; SW F&B CN2, Navigos: MCCQT — kiểm 23/10, MCCQT cũng tra được trên
 cổng Golf) → khai báo "keys" trong SELLER_PORTALS. Cổng -tt78 chỉ có form tra theo Fkey (+ đăng nhập).
 
+Mail Petrolimex ("Thông báo phát hành <tên người bán>", 26/10): link trang chủ hoadon.petrolimex.com.vn
++ mã tra cứu "7YZCACMAG*" (= Fkey, giữ dấu *). Mail không có số HĐ/MST người bán → dict HĐ chỉ có Fkey +
+lookup_url; PDF khớp HĐ theo chữ trong PDF (mail_ingest._match_pdf_text). 65 mã khác nhau, 17 mã trùng
+ma_tra_cuu của HĐ trong DB.
+
 Chưa làm: cổng tracuuhoadon.vnpt-invoice.com.vn.
 """
 from __future__ import annotations
@@ -117,6 +122,15 @@ def _is_tt78(base: str | None) -> bool:
     return bool(base) and bool(_TT78_HOST_RE.match((urlsplit(base).hostname or "").lower()))
 
 
+def _portal_by_host(host: str | None) -> str | None:
+    """Cổng riêng (không phải -tt78) trong PORTALS có tên miền `host`, vd hoadon.petrolimex.com.vn."""
+    host = (host or "").lower()
+    for base in PORTALS.values():
+        if host and not _is_tt78(base) and urlsplit(base).hostname == host:
+            return base
+    return None
+
+
 def _root_fkey(invoice: dict) -> str:
     """Fkey VNPT ở <HDon><Fkey> (ngoài DLHDon, xml_parser không đọc) → đọc lại file XML đã lưu."""
     path = invoice.get("xml_path")
@@ -168,7 +182,8 @@ class VnptAdapter(PdfAdapter):
     source_id = "vnpt"
     name = "VNPT Invoice"
     mst_tcgp = ("0100684378",)
-    hosts = ("vnpt-invoice.com.vn",)      # link mail: chỉ nhận cổng <alias>-tt78 (invoice_from_link)
+    # link mail: cổng <alias>-tt78 và cổng riêng dạng SearchInvoicebycode (PORTALS, vd Petrolimex)
+    hosts = ("vnpt-invoice.com.vn", "hoadon.petrolimex.com.vn")
 
     def __init__(self):
         self._codes: dict = {}            # (cổng, Fkey) → checkCode: fetch_xml + fetch_pdf chỉ giải 1 captcha
@@ -193,10 +208,10 @@ class VnptAdapter(PdfAdapter):
         rule = cls.seller_rule(invoice)
         if rule:
             return PORTALS[rule["portal"]]
-        url = (invoice.get("lookup_url") or "").strip()   # link -tt78 lấy từ mail
+        url = (invoice.get("lookup_url") or "").strip()   # link lấy từ mail
         if _is_tt78(url):
             return f"https://{urlsplit(url).hostname.lower()}"
-        return None
+        return _portal_by_host(urlsplit(url).hostname)
 
     @classmethod
     def fkey(cls, invoice: dict) -> str:
@@ -215,12 +230,16 @@ class VnptAdapter(PdfAdapter):
         """
         Mail VNPT: link trang chủ cổng <alias>-tt78.vnpt-invoice.com.vn + "Mã tra cứu hóa đơn: <Fkey>"
         (+ "có số 06471438 thuộc mẫu 1/023 và serial K26THA"). Chỉ đọc chuỗi, không mở link.
+        Cổng riêng trong PORTALS (Petrolimex): link trang chủ + mã tra cứu (Fkey) → tra form SearchInvoicebycode.
         Cổng VNPT khác (HST, tracuuhoadon...) hoặc không có mã → None.
         """
         host = (urlsplit(url).hostname or "").lower()
-        if not _TT78_HOST_RE.match(host):
-            return None
-        base = f"https://{host}"
+        if _TT78_HOST_RE.match(host):
+            base = f"https://{host}"
+        else:
+            base = _portal_by_host(host)
+            if not base:
+                return None
         params = link_params(url)
         key = (code or params.get("fkey") or params.get("strfkey") or "").strip()
         if not key:
@@ -235,7 +254,8 @@ class VnptAdapter(PdfAdapter):
             return None
         inv = {"ma_tra_cuu": key, "tt_khac": {"Fkey": key}, "lookup_url": base}
         msts = [m for r in SELLER_PORTALS if PORTALS[r["portal"]] == base for m in r.get("mst", ())]
-        if len(msts) == 1:
+        # Petrolimex: mail của cả công ty mẹ lẫn chi nhánh -001 → không đoán MST, khớp theo chữ trong PDF
+        if len(msts) == 1 and _is_tt78(base):
             inv["nbmst"] = msts[0]
         m = _MAIL_INV_RE.search(mail_text or "")
         if m:

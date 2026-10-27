@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import pdf_providers                         # noqa: E402
 from pdf_providers import PdfFetchError      # noqa: E402
 from pdf_providers import common, thaco      # noqa: E402
 
@@ -138,3 +139,12 @@ def test_invoice_from_link():
     assert a.invoice_from_link("https://hoadondientu.thaco.com.vn/", None, "") is None
     assert a.invoice_from_link(f"https://evil.example/Invoice/getinvoice?token={TOKEN}", None, "") is None
     assert base64.b64decode(TOKEN).endswith(b"|0313592114")
+
+
+def test_old_host_footer_link_is_ignored():
+    # Cả 27 mail phí quản lý SALA mang cùng 1 link /Invoice/download cố định (1 HĐ TT32 năm 2019)
+    a = pdf_providers.adapter_for_host("hoadon.thaco.com.vn")
+    assert a.source_id == "thaco"
+    url = ("http://hoadon.thaco.com.vn/Invoice/download/?id=5500580076004100&pattern=01GTKT0/001")
+    assert a.invoice_from_link(url, "5500580076004100", "THÔNG TIN HÓA ĐƠN PHÍ QUẢN LÝ") is None
+    assert pdf_providers.adapter_for_host("hoadondientu.thaco.com.vn").source_id == "thaco"

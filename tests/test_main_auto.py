@@ -63,16 +63,20 @@ CO = {"company_mst": "1201496252", "gdt_username": "1201496252-U002"}
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
-    seen = {}
+    seen = {"windows": [], "order": []}
 
     def fake_sync(store, company, tokens, sub_types, windows_for, breaker, stats, move_cursor=True):
-        seen.update(company=company["company_mst"], sub_types=sub_types, move_cursor=move_cursor,
-                    windows=windows_for(sub_types[0]))
+        seen.update(company=company["company_mst"], sub_types=sub_types, move_cursor=move_cursor)
+        seen["windows"] += windows_for(sub_types[0])
+        seen["order"].append("list")
+        if seen.get("fail") in windows_for(sub_types[0]):
+            stats["sync_errors"] += 1
         stats["listed"] += 3
         stats["new_invoices"] += 2
 
     def fake_xml(store, company, tokens, breaker, run_id, limit, stats, out_dir):
-        stats["xml_ok"] += 2
+        seen["order"].append("xml")
+        stats["xml_ok"] += min(2, limit)
 
     monkeypatch.setattr(invoice_job, "sync_lists", fake_sync)
     monkeypatch.setattr(invoice_job, "process_xml", fake_xml)
@@ -96,8 +100,41 @@ def test_date_range_goes_to_db_without_moving_tick_cursor(monkeypatch, wired, tm
     assert wired["windows"][-1][1] == date(2026, 9, 30)
     assert any(st.startswith("mua") for st in wired["sub_types"]) and any(st.startswith("ban") for st in wired["sub_types"])
     cmd, status, stats = store.runs[0]
-    assert cmd == "manual" and status == "ok" and stats["stats"]["xml_ok"] == 2
+    assert cmd == "manual" and status == "ok" and stats["stats"]["xml_ok"] == 2 * len(wired["windows"])
     assert store.closed
+
+
+def test_split_range_caps_at_30_days():
+    chunks = main_auto.split_range(date(2023, 1, 1), date(2026, 10, 26))
+    assert chunks[0] == (date(2023, 1, 1), date(2023, 1, 30))
+    assert chunks[-1][1] == date(2026, 10, 26)
+    assert all((e - s).days + 1 <= 30 for s, e in chunks)
+    assert all(b[0] == a[1] + (b[0] - a[1]) and (b[0] - a[1]).days == 1 for a, b in zip(chunks, chunks[1:]))
+    assert main_auto.split_range(date(2026, 1, 1), date(2026, 3, 31), 90) == \
+        main_auto.split_range(date(2026, 1, 1), date(2026, 3, 31), 30)            # >30 bị chặn về 30
+    assert main_auto.split_range(date(2026, 9, 1), date(2026, 9, 1)) == [(date(2026, 9, 1), date(2026, 9, 1))]
+
+
+def test_each_chunk_lists_then_downloads_xml(monkeypatch, wired):
+    _run(monkeypatch, _Store([CO]), "--from", "2026-01-01", "--to", "2026-03-31")
+    assert len(wired["windows"]) == 3                                                # 90 ngày → 3 đoạn
+    assert wired["order"] == ["list", "xml"] * 3                                     # xen kẽ, không dồn danh sách
+
+
+def test_failed_chunk_does_not_stop_later_chunks(monkeypatch, wired):
+    wired["fail"] = (date(2026, 1, 31), date(2026, 3, 1))
+    store = _Store([CO])
+    assert _run(monkeypatch, store, "--from", "2026-01-01", "--to", "2026-03-31") == 1
+    assert len(wired["windows"]) == 3                                                # đoạn sau vẫn chạy
+    cmd, status, stats = store.runs[0]
+    assert status == "partial" and stats["stats"]["failed_chunks"] == ["2026-01-31→2026-03-01"]
+
+
+def test_xml_limit_spans_all_chunks(monkeypatch, wired):
+    store = _Store([CO])
+    _run(monkeypatch, store, "--from", "2026-01-01", "--to", "2026-03-31", "--xml-limit", "3")
+    assert store.runs[0][2]["stats"]["xml_ok"] == 3
+    assert wired["order"].count("xml") == 2                                          # hết hạn mức thì thôi tải
 
 
 def test_type_filter(monkeypatch, wired):

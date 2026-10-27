@@ -55,6 +55,14 @@ from . import pavietnam  # noqa: E402,F401  P.A Việt Nam hoadon.pavietnam.vn (
 from . import vnisc  # noqa: E402,F401  VNISC invoice.abcsys.vn (0102331762) — captcha bằng ddddocr
 from . import fast  # noqa: E402,F401  FAST einvoice.fast.com.vn (0100727825) — TTKhac KeySearch; bước tải không kiểm captcha
 from . import express247  # noqa: E402,F401  247Express hoadon.247express.vn (người bán 0304043037) — mã từ link mail, không captcha
+from . import evat  # noqa: E402,F401  eVAT *.evat.vn — Phương Nam (0316642395); TTKhac "Mã tra cứu hóa đơn"
+from . import matbao  # noqa: E402,F401  Mắt Bão matbao.in (0302712571) — Fkey suy từ XML qua API của cổng
+from . import onlinevina  # noqa: E402,F401  Online VI NA (0314185087) — TTKhac SearchInvoice; dựng PDF từ XML + XSLT (cần lxml)
+from . import vininvoice  # noqa: E402,F401  VININVOICE tracuu.vininvoice.vn (0109282176) — MCCQT, không captcha
+from . import wininvoice  # noqa: E402,F401  WinInvoice tracuu.wininvoice.vn (0312303803) — cùng phần mềm eVAT
+from . import rosysoft  # noqa: E402,F401  Rosy Soft einv.rosysoft.vn (0305142231) — Vinasun/Ánh Dương; không captcha
+from . import asiainvoice  # noqa: E402,F401  ASIA asiainvoice.vn (0101162173) — FKey chỉ có trong mail; captcha ddddocr
+from . import fahasa  # noqa: E402,F401  Fahasa hoadon.fahasa.com (FPT tự host) — chỉ qua link mail, không nhận MSTTCGP FPT
 
 
 def supported_mst_tcgp() -> list:

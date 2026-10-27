@@ -29,8 +29,16 @@ HILO có 2 nền tảng tra cứu (khảo sát 10/2026):
      GET /Invoice/getinvoice?token=base64("<mẫu>:<ký hiệu>:<số>:<MST bán>")  → application/pdf
          (vd "1:C26TPD:1443:3603526528"); HĐ không có → 302 về /Invoice/Index
    Token chỉ gồm thông tin có sẵn trong XML → dùng cho người bán đã kiểm trong LEGACY_SELLERS và
-   cho link mail (invoice_from_link). Host tt78hd.hilo.com.vn dùng token KHÁC
-   ("1_C23TIH_927|<MST>") — chưa làm.
+   cho link mail (invoice_from_link).
+
+3. Cổng cũ tt78hd.hilo.com.vn (mail 2023, kiểm 26/10 trên HĐ Times Square C23TIH-927, người mua 1201496252):
+   cùng kiểu link mail nhưng token KHÁC: base64("<mẫu>_<ký hiệu>_<số>|<MST bán>"), vd "1_C23TIH_927|0300648218".
+     GET /Invoice/getinvoice?token=..  → application/pdf;  HĐ không có → 302 về /Invoice/Index
+   Chỉ dùng token có trong link mail (invoice_from_link), không tự dựng cho HĐ từ XML.
+
+Link tracking.hilo.com.vn/api.php?...&taxcode=<MST bán>&custaxcode=<MST mua> trong mail HILO chỉ là link
+quảng cáo/đếm click (position=footer/left/right/text_dangky, req_type=img|click) — không có khóa HĐ
+→ invoice_from_link trả None (link 'ignored'); PDF lấy qua link getinvoice cùng mail.
 """
 from __future__ import annotations
 
@@ -60,6 +68,10 @@ SELLER_PORTALS = {
 # Cổng chung cũ: tải bằng link mail /Invoice/getinvoice?token=base64("mẫu:ký hiệu:số:MST bán").
 LEGACY_BASE = "https://tracuuhddt78.hilo.com.vn"
 LEGACY_HOST = "tracuuhddt78.hilo.com.vn"
+# Cổng cũ tt78hd: token base64("mẫu_ký hiệu_số|MST bán") — chỉ có trong link mail
+TT78HD_BASE = "https://tt78hd.hilo.com.vn"
+TT78HD_HOST = "tt78hd.hilo.com.vn"
+TRACKING_HOST = "tracking.hilo.com.vn"            # link đếm click/quảng cáo trong mail → bỏ qua
 LEGACY_SELLERS = {
     "3603526528",                                   # Kim Đại Phát (PDF ghi tracuuhddt78; thật 1/1 + 2 PDF mail)
 }
@@ -169,11 +181,24 @@ def decode_legacy_token(token: str) -> dict | None:
     return {"khmshdon": int(m.group(1)), "khhdon": m.group(2), "shdon": int(m.group(3)), "nbmst": m.group(4)}
 
 
+def decode_tt78hd_token(token: str) -> dict | None:
+    """base64("1_C23TIH_927|0300648218") → {khmshdon, khhdon, shdon, nbmst} hoặc None."""
+    try:
+        raw = base64.b64decode(token + "=" * (-len(token) % 4), validate=True).decode("ascii")
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
+    m = re.fullmatch(r"(\d)_([A-Z0-9]{6})_0*(\d+)\|(\d{10}(?:-\d{3})?)", raw.strip())
+    if not m:
+        return None
+    return {"khmshdon": int(m.group(1)), "khhdon": m.group(2), "shdon": int(m.group(3)), "nbmst": m.group(4)}
+
+
 class HiloAdapter(PdfAdapter):
     source_id = "hilo"
     name = "T-VAN HILO"
     mst_tcgp = ("0106713804",)
-    hosts = (LEGACY_HOST,)                          # link mail getinvoice / ViewFromEmail
+    # link mail getinvoice / ViewFromEmail (2 cổng cũ); tracking = link quảng cáo, nhận để đánh 'ignored'
+    hosts = (LEGACY_HOST, TT78HD_HOST, TRACKING_HOST)
 
     @staticmethod
     def portal_for(invoice: dict) -> str | None:
@@ -197,19 +222,28 @@ class HiloAdapter(PdfAdapter):
     def invoice_from_link(self, url: str, code, mail_text: str):
         """Link mail tracuuhddt78: /Invoice/getinvoice|ViewFromEmail?token=.. → dict HĐ. Không mở link."""
         parts = urlsplit(url or "")
-        if (parts.hostname or "").lower() != LEGACY_HOST:
+        host = (parts.hostname or "").lower()
+        if host not in (LEGACY_HOST, TT78HD_HOST):          # gồm tracking.hilo.com.vn → None
             return None
         if parts.path.lower().rstrip("/") not in ("/invoice/getinvoice", "/invoice/viewfromemail"):
             return None
         tok = ({k.lower(): v[0] for k, v in parse_qs(parts.query).items() if v}.get("token") or "").strip()
+        key = (code or "").strip()
+        if host == TT78HD_HOST:
+            fields = decode_tt78hd_token(tok)
+            if not fields:
+                return None
+            return {**fields, "mst_tcgp": self.mst_tcgp[0], "lookup_url": f"{TT78HD_BASE}/",
+                    "tt78hd_token": tok, "tt_khac": {"Fkey": key} if key else {}}
         fields = decode_legacy_token(tok)
         if not fields:
             return None
-        key = (code or "").strip()
         return {**fields, "mst_tcgp": self.mst_tcgp[0], "lookup_url": f"{LEGACY_BASE}/",
                 "tt_khac": {"Fkey": key} if key else {}}
 
     def fetch_pdf(self, invoice: dict) -> bytes:
+        if invoice.get("tt78hd_token"):
+            return self._getinvoice(TT78HD_BASE, invoice["tt78hd_token"], invoice)
         base = self.portal_for(invoice)
         if not base and self.is_legacy(invoice):
             return self._legacy_pdf(invoice)
@@ -244,12 +278,17 @@ class HiloAdapter(PdfAdapter):
         tok = legacy_token(invoice)
         if not tok:
             raise PdfFetchError("Thiếu mẫu/ký hiệu/số/MST bán để dựng link tải HILO", "no_code")
-        r = request(new_session(), "GET", f"{LEGACY_BASE}/Invoice/getinvoice", params={"token": tok},
-                    headers={"Referer": f"{LEGACY_BASE}/"}, allow_redirects=False)
+        return self._getinvoice(LEGACY_BASE, tok, invoice)
+
+    @staticmethod
+    def _getinvoice(base: str, tok: str, invoice: dict) -> bytes:
+        """GET <cổng cũ>/Invoice/getinvoice?token= → PDF; 302 về /Invoice/Index = không có HĐ."""
+        r = request(new_session(), "GET", f"{base}/Invoice/getinvoice", params={"token": tok},
+                    headers={"Referer": f"{base}/"}, allow_redirects=False)
         if r.status_code in (301, 302, 303):
             raise PdfFetchError(
                 f"HILO không tìm thấy HĐ {invoice.get('khhdon')}-{invoice.get('shdon')} của "
-                f"{invoice.get('nbmst')} trên {LEGACY_HOST}", "no_pdf")
+                f"{invoice.get('nbmst')} trên {urlsplit(base).hostname}", "no_pdf")
         if r.status_code != 200:
             raise PdfFetchError(f"HILO getinvoice trả HTTP {r.status_code}", "server")
         if not is_pdf(r.content):
