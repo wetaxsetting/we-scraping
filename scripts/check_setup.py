@@ -28,6 +28,9 @@ PROD_MODELS = {
     "g_1500x350": "adapter visnam",
     "g_300x75": "adapter xcyber (CyberLotus)",
     "g_200x70": "adapter thaison (Thai Son)",
+    "g_120x38": "adapter megabiz",
+    "g_194x35": "adapter pvoil",
+    "g_120x40_cloud": "adapter cloudteam (Nhom May)",
 }
 PACKAGES = ["torch", "numpy", "cv2", "PIL", "yaml", "requests", "psycopg2",
             "dotenv", "openpyxl", "fitz", "playwright", "skia", "ddddocr"]

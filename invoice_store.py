@@ -551,10 +551,15 @@ class InvoiceStore:
             return True
 
     def pending_email_links(self, max_attempts: int = 3) -> list:
-        """Link 'new' (chưa xử lý / lỗi chưa quá max_attempts lần), kèm tiêu đề + mã trong mail."""
+        """Link 'new' (chưa xử lý / lỗi chưa quá max_attempts lần), kèm tiêu đề + mã trong mail.
+        mail_has_pdf: chính mail đó đã kèm PDF hóa đơn (không tính file bị loại not_ours/not_invoice)."""
         with self._tx() as cur:
             cur.execute("""
-                SELECT l.*, m.subject, m.stats -> 'codes' AS mail_codes
+                SELECT l.*, m.subject, m.stats -> 'codes' AS mail_codes,
+                       m.stats -> 'seller_msts' AS mail_seller_msts,
+                       EXISTS (SELECT 1 FROM email_files f
+                                WHERE f.email_id = l.email_id AND f.kind = 'pdf'
+                                  AND f.status IN ('matched', 'duplicate', 'unmatched')) AS mail_has_pdf
                   FROM email_links l JOIN email_messages m ON m.id = l.email_id
                  WHERE l.status = 'new' AND l.attempts < %s
                  ORDER BY l.email_id, l.id

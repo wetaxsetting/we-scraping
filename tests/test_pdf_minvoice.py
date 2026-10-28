@@ -122,3 +122,24 @@ def test_errors(monkeypatch, result, kind):
     with pytest.raises(PdfFetchError) as ei:
         minvoice.MinvoiceAdapter().fetch_pdf(dict(INV))
     assert ei.value.kind == kind
+
+
+MAIL_QUANNEM = "THÔNG BÁO XUẤT HÓA ĐƠN SỐ 2848\nE864CA9903996CF4\nMST người bán: 0313217924"
+
+
+def test_invoice_from_link_mail():
+    a = minvoice.MinvoiceAdapter()
+    assert pdf_providers.adapter_for_host("tracuuhoadon.minvoice.vn") is pdf_providers.get_adapter("minvoice")
+    inv = a.invoice_from_link("http://tracuuhoadon.minvoice.vn/", "E864CA9903996CF4", MAIL_QUANNEM)
+    assert inv == {"nbmst": "0313217924", "ma_tra_cuu": "E864CA9903996CF4",
+                   "tt_khac": {"Số bảo mật": "E864CA9903996CF4"}, "shdon": 2848}
+    assert a.lookup_code(inv) == "E864CA9903996CF4"
+
+
+@pytest.mark.parametrize("code, text", [
+    (None, "THÔNG BÁO XUẤT HÓA ĐƠN SỐ 2848\nE864CA9903996CF4"),                      # thiếu MST người bán
+    (None, "THÔNG BÁO XUẤT HÓA ĐƠN SỐ 2848\nMST người bán: 0313217924"),             # thiếu số bảo mật
+    (None, MAIL_QUANNEM + "\n33197B32DEE9B3CA"),                                      # 2 mã → không đoán
+])
+def test_invoice_from_link_unusable(code, text):
+    assert minvoice.MinvoiceAdapter().invoice_from_link("http://tracuuhoadon.minvoice.vn/", code, text) is None

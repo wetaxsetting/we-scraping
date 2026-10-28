@@ -76,6 +76,8 @@ log = logging.getLogger("invoice_job")
 
 VN_TZ = timezone(timedelta(hours=7))
 XML_THROTTLE_SECONDS = 0.7      # nhịp gọi GDT, giữ như app tham khảo
+RATE_LIMIT_PAUSE_SECONDS = 60   # GDT trả 429 khi tải XML: nghỉ 60, 120, 240, 300 s rồi mới ngắt mạch
+RATE_LIMIT_PAUSE_MAX = 300
 CLAIM_BATCH = 50
 DEFAULT_XML_LIMIT = 300         # mỗi công ty mỗi lượt
 DEFAULT_PDF_LIMIT = 50
@@ -416,6 +418,12 @@ def xml_batch(store, company, tokens, breaker, run_id, batch, stats, out_dir,
         except Exception as e:  # noqa: BLE001
             kind = classify(e)
             breaker.record(False, kind)
+            if kind == "rate_limit" and not breaker.open:
+                # GDT 429: nghỉ tăng dần thay vì gọi tiếp 0,7 s/HĐ — trước đây 5 lần 429 trong 4 giây
+                # làm ngắt mạch dừng cả lượt main_auto (26/10/2026, còn 44/47 đoạn chưa chạy)
+                wait = min(RATE_LIMIT_PAUSE_SECONDS * 2 ** (breaker.consecutive - 1), RATE_LIMIT_PAUSE_MAX)
+                log.warning("[%s] GDT 429 → nghỉ %d s", mst, wait)
+                time.sleep(wait)
             if _no_xml_on_gdt(task, kind):
                 store.mark_no_source(task, "HĐ không mã, Thuế không có XML (500) → coi như gửi "
                                      "theo bảng tổng hợp; chờ XML/PDF từ mail", run_id,

@@ -16,8 +16,15 @@ cổng tra cứu chung tra được HĐ của mọi người bán theo MST + s�
 
 MST người bán giữ hay bỏ dấu '-' đều được. Mã phân biệt hoa thường (viết thường → 5000).
 Mã: TTKhac "Số bảo mật" (HĐ thường) hoặc "Mã tra cứu" (HĐ máy tính tiền), cả hai 16 ký tự hex.
+
+Mail "THÔNG BÁO XUẤT HÓA ĐƠN SỐ 2848" (27/10, user kiểm tay): link chỉ là trang chủ
+tracuuhoadon.minvoice.vn, nội dung ghi "MST người bán: 0313217924" + "Số bảo mật: E864CA9903996CF4"
+→ đủ để gọi API trên (mail_reader lưu MST người bán, process_links truyền vào mail_text). Thật 2/2
+(Quán Nem 1C24TYY-2848, -3581).
 """
 from __future__ import annotations
+
+import re
 
 import requests
 
@@ -28,12 +35,29 @@ from .common import TIMEOUT, check_pdf_is_invoice, is_pdf, new_session
 BASE = "https://tracuuhoadon.minvoice.com.vn"
 API = f"{BASE}/api/Search/SearchInvoice"
 CODE_KEYS = ("Số bảo mật", "Mã tra cứu", "Mã bảo mật", "sobaomat")
+_CODE_RE = re.compile(r"^[0-9A-F]{16}$")
+_MAIL_MST_RE = re.compile(r"^MST người bán:\s*(\d{10}(?:-\d{3})?)$", re.M)
+_SUBJECT_NO_RE = re.compile(r"H[ÓO]A\s*[ĐD][ƠO]N\s*S[ỐO]\s*0*(\d+)", re.I)
 
 
 class MinvoiceAdapter(PdfAdapter):
     source_id = "minvoice"
     name = "M-invoice"
     mst_tcgp = ("0106026495",)
+    hosts = ("tracuuhoadon.minvoice.vn", "tracuuhoadon.minvoice.com.vn")
+
+    def invoice_from_link(self, url: str, code, mail_text: str):
+        """Link trang chủ + "MST người bán" + "Số bảo mật" trong mail (không mở link). Thiếu 1 trong 2 → None."""
+        lines = (mail_text or "").splitlines()
+        codes = [c for c in dict.fromkeys([code or ""] + [ln.strip() for ln in lines[1:]]) if _CODE_RE.match(c)]
+        msts = _MAIL_MST_RE.findall(mail_text or "")
+        if len(codes) != 1 or len(set(msts)) != 1:
+            return None
+        inv = {"nbmst": msts[0], "ma_tra_cuu": codes[0], "tt_khac": {"Số bảo mật": codes[0]}}
+        m = _SUBJECT_NO_RE.search(lines[0] if lines else "")
+        if m:
+            inv["shdon"] = int(m.group(1))
+        return inv
 
     @staticmethod
     def lookup_code(invoice: dict) -> str:

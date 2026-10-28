@@ -191,6 +191,31 @@ def authenticate_auto(username: str, password: str,
             "attempts": max_retries, "confidence": last_conf}
 
 
+_CAPTCHA_WORDS = ("captcha", "mã xác nhận", "xác thực", "cvalue", "ckey", "wrong")
+
+
+def _is_captcha_error(msg: str) -> bool:
+    return any(kw in (msg or "").lower() for kw in _CAPTCHA_WORDS)
+
+
+def sco_captcha(max_retries: int = 4, delay: float = 1.0) -> dict:
+    """
+    Captcha cho sco-query (HĐ máy tính tiền) → {ckey, cvalue} gửi kèm làm query param.
+    Từ 10/2026 cổng GDT bật popup captcha cho MỌI request sco-query (tìm, sang trang, xuất Excel —
+    `withCaptcha` trong JS cổng); thiếu thì GDT trả 500 "Required request parameter 'ckey' ... is not
+    present". Cùng captcha SVG với đăng nhập → model g_600x120. export-xml thì không cần.
+    """
+    solver = _get_solver()
+    for _ in range(max_retries):
+        cap = fetch_captcha()
+        if cap["image_svg"]:
+            text, conf = solver.solve(cap["image_svg"])
+            if text:
+                return {"ckey": cap["ckey"], "cvalue": text}
+        time.sleep(delay)
+    raise GDTError(f"Không giải được captcha GDT cho sco-query sau {max_retries} lần", kind="server")
+
+
 # ---------------------------------------------------------------------------
 # LẤY DANH SÁCH HÓA ĐƠN  (pagination bằng state token)
 # ---------------------------------------------------------------------------
@@ -279,6 +304,7 @@ def _fetch_single_type(token: str, invoice_type: str,
     all_rows: list = []
     state = ""
     retry_wait = 5
+    sco = ep.startswith("/sco-query")
 
     while True:
         params = {"sort": "tdlap:desc", "size": size,
@@ -286,9 +312,10 @@ def _fetch_single_type(token: str, invoice_type: str,
         if state:
             params["state"] = state
 
-        for attempt in range(4):
+        captcha_left, attempt = 4, 0
+        while True:
             try:
-                r = _do_get(token, ep, params)
+                r = _do_get(token, ep, {**params, **sco_captcha()} if sco else params)
                 break
             except _RateLimitError:
                 if attempt == 3:
@@ -296,11 +323,17 @@ def _fetch_single_type(token: str, invoice_type: str,
                         f"Rate limit 429 sau 4 lần thử ({invoice_type}). "
                         f"Vui lòng đợi vài phút rồi thử lại.")
                 time.sleep(retry_wait * (2 ** attempt))  # 5,10,20,40s
+                attempt += 1
             except _TimeoutError:
                 if attempt == 3:
                     raise RuntimeError(
                         f"GDT không phản hồi sau 4 lần thử ({invoice_type}).")
                 time.sleep(10 * (attempt + 1))
+                attempt += 1
+            except RuntimeError as e:
+                if not (sco and captcha_left and _is_captcha_error(str(e))):
+                    raise
+                captcha_left -= 1                 # model đọc sai captcha → xin ảnh mới
 
         try:
             data = r.json()
@@ -473,13 +506,19 @@ def export_invoice_list(token: str, sub_type: str, from_date: str, to_date: str,
     params = {"sort": "tdlap:desc", "search": _build_search(from_date, to_date, extra)}
     if sub_type.startswith("mua"):
         params["type"] = "purchase"
-    for attempt in range(retries + 1):
+    sco = ep.startswith("/sco-query")
+    captcha_left, attempt = 4, 0
+    while True:
         try:
-            return _export_once(token, ep, params, timeout)
+            return _export_once(token, ep, {**params, **sco_captcha()} if sco else params, timeout)
         except GDTError as e:
+            if sco and captcha_left and e.kind == "other" and _is_captcha_error(str(e)):
+                captcha_left -= 1                 # captcha sai → xin ảnh mới
+                continue
             if not e.retryable or attempt == retries:
                 raise
             time.sleep(15 * (attempt + 1))       # 15s, 30s
+            attempt += 1
 
 
 def parse_invoice_list_excel(data: bytes, sub_type: str) -> list:

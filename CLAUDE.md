@@ -17,7 +17,7 @@ Project gồm 2 phần, mô tả riêng bên dưới:
   tự chạy lại khi user chưa yêu cầu.
 - Repo GitHub (`wetaxsetting/we-scraping`) không chứa `env/`, `env_pass/`, `output/`, `.env`, `example/`.
   `runs/` chỉ đưa `best.pt` (Git LFS) + `history.csv` của nhóm đang dùng thật: `g_600x120`, `g_150x34`,
-  `g_80x30`, `g_1500x350`. Adapter mới dùng nhóm khác → thêm `!runs/<nhóm>/` vào `.gitignore`.
+  `g_80x30`, `g_1500x350`, `g_300x75`, `g_200x70`, và từ 27/10 `g_120x38`, `g_194x35`, `g_120x40_cloud`. Adapter mới dùng nhóm khác → thêm `!runs/<nhóm>/` vào `.gitignore`.
   Máy mới: cài Git LFS trước khi clone, nếu không `best.pt` chỉ là file trỏ vài trăm byte và không nạp được.
 - Báo cáo tuần: `report/Bao-cao-tuan-<tuần>-<năm>.docx` + bản tiếng Anh `report/Weekly-report-W<tuần>-<năm>.docx`
   (cùng nội dung, sửa bản nào thì sửa cả hai). Số liệu lấy từ `invoice_job.py status`,
@@ -317,7 +317,14 @@ python -X utf8 web/main_auto.py --from 2026-08-01 --to 2026-09-30 [--company MST
 `web/main_auto.py` (từ 14/10) **ghi thẳng vào DB** qua đúng các hàm của job (`sync_lists` với
 `move_cursor=False`, `process_xml`, tùy chọn `process_pdf`). Khoảng dài tự chia đoạn ≤ 30 ngày (giới hạn GDT,
 `split_range`, `--chunk-days`), **mỗi đoạn lấy danh sách rồi tải XML luôn**; đoạn lỗi không chặn đoạn sau và được in
-ra cuối lượt (`stats.failed_chunks`) để chạy lại riêng (26/10). Không còn ghi `hoa_don.json` /
+ra cuối lượt (`stats.failed_chunks`) để chạy lại riêng (26/10).
+**27/10 sửa 3 lỗi làm lượt 2023→2026 ngày 26/10 dừng sau 3/47 đoạn:** (1) GDT giới hạn **≤ 1 tháng lịch**, không phải
+30 ngày (31/01→01/03 bị 400 "không được lớn hơn 1 tháng") → `job_policy.chunk_range` cắt thêm theo `_month_limit`
+(sửa cả cửa sổ 30 ngày của `tick` đầu tháng 3); (2) `sco-query` (HĐ MTT) nay **bắt captcha** cho mọi request tìm/sang
+trang/xuất Excel (500 "Required request parameter 'ckey'") → `api_client.sco_captcha()` giải captcha SVG bằng `g_600x120`,
+gửi `ckey`+`cvalue` làm query param, sai thì xin ảnh mới (tối đa 4); `export-xml` không cần; (3) GDT 429 khi tải XML →
+`xml_batch` nghỉ 60/120/240/300 s thay vì gọi tiếp 0,7 s (5 lần 429 trong 4 s từng làm ngắt mạch). Cả 3 mới kiểm offline,
+**chưa chạy thật trên GDT**. Không còn ghi `hoa_don.json` /
 `hoa_don_chitiet.json`; `--excel` xuất từ DB. Ghi `job_runs.command='manual'`.
 Thư mục cũ `output/xml/1201496252-U002/` và 2 file JSON là của bản cũ (đặt theo username) và có thể xóa.
 Khi chạy `fetch_pdf.py` luôn thêm `--company 1201496252`.
@@ -418,7 +425,9 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
 ## 2.5 Những điểm dễ sai về GDT
 
 - Mọi request phải có header `request-id` (UUID), thiếu là bị 403 "hành vi không hợp lệ".
-- Query hóa đơn mua vào phải có `ttxly` (5 = có mã, 6 = không mã, 8 = MTT). MTT dùng `/sco-query/`.
+- Query hóa đơn mua vào phải có `ttxly` (5 = có mã, 6 = không mã, 8 = MTT). MTT dùng `/sco-query/`, và từ 10/2026
+  mọi request danh sách/xuất Excel `sco-query` phải kèm `ckey`+`cvalue` (captcha GDT, `api_client.sco_captcha`).
+- Khoảng tìm kiếm ≤ 30 ngày **và** ≤ 1 tháng lịch (31/01→01/03 bị từ chối dù chỉ 30 ngày).
 - **`tdlap` là giờ UTC.** Luôn đổi qua `api_client.tdlap_vn()`, nếu không HĐ ngày 1 sẽ bị xếp nhầm sang tháng trước.
 - Username đăng nhập (vd `1201496252-U002`) có thể khác MST: DB tách `company_mst` và `gdt_username`.
 - **`hthdon=2`** (HĐ không mã, gửi qua bảng tổng hợp): export-xml **luôn trả 500**. Job vẫn lưu phần
@@ -471,6 +480,31 @@ Các adapter dưới đây đã thử thật trên XML thật (10/2026):
 | `rosysoft`       | Rosy Soft ROSY_ERP (einv.rosysoft.vn:8386) — người bán Ánh Dương/Vinasun 0302035520 | 0305142231 | `TaxCode`+`InvID` (link mail) hoặc `TaxCode`+`InvSerial`+`InvNo` → lưới trả `PINCode` → PDF base64 + XML ký số | không. Thật 26/26 (24 link mail + 2 HĐ trong DB). HĐ Vinasun là hthdon=2, không có XML → không có task PDF tự động; lấy qua link mail |
 | `asiainvoice`    | ASIA / A-Invoice (asiainvoice.vn, tracuu./tt78.) | 0101162173 | FKey = "Mã tra cứu" **chỉ có trong mail** (XML Thuế không có → `no_code`) → `POST /tra-cuu {FKey, Captcha}` → PDF base64; XML qua `/tra-cuu/downloadxml` cùng phiên | ảnh 150x30 5 ký tự → ddddocr + `.upper()`, server nhận 11/15, thử tối đa 6 lần. Thật 2/2 |
 | `fahasa`         | Fahasa (hoadon.fahasa.com, người bán 0304132047) — **FPT tự host** | — (không khai 0104128565 vì cổng FPT chung có reCAPTCHA) | link mail `sec=<mã>`, số HĐ từ tiêu đề → `/api/seek/search1?...&token=` | bản cài này không bật reCAPTCHA (`captchaType` không đặt), token rỗng được nhận 5/5. Thật 5/5 PDF + XML |
+
+| `mobifone`       | MobiFone (tracuuhoadonvienthong. / tracuuhoadon.mobifone.vn; cổng chung tracuuhoadon.mobifoneinvoice.vn) | 0100686209 (+ -002) | "số bảo mật" **chỉ có trong mail** (`sobaomat=`) → `POST /Tracuu2/GetInfoInvoice` → `PrintInvoice` (PDF) + `ExportZipFileXML` | không. Thật 10/10 (27/10, link mail). XML Thuế không có mã → HĐ chỉ có XML vẫn `no_code` |
+| `kiotviet`       | KiotViet (api.einvoice.kiotviet.vn) | 0104359717 | `mtc` từ link mail `?shd=&mtc=` (HĐ MTT không có mã trong XML) | không. Thật 1/1 PDF + XML (27/10) |
+
+**Adapter thêm 27/10 cho NCC trong `docs/Danh_sach_NCC.xlsx` — CHƯA có HĐ thật** (DB không có HĐ/link nào của các MSTTCGP
+này): mỗi cổng chỉ mới kiểm phản hồi "không tìm thấy" (và captcha sai/đúng) bằng mã bịa; nhánh tải PDF suy từ JS/HTML của
+cổng. Mọi PDF vẫn qua `check_pdf_is_invoice`, nên sai thì ra `no_pdf`/`bad_content` chứ không lưu nhầm. Có HĐ thật thì chạy
+`pdf --limit` để xác nhận rồi cập nhật dòng ở đây. Tên trường TTKhac chưa đối chiếu XML thật → `pdf_providers/lookup_codes.py`
+gom mọi trường giống "mã tra cứu/số bảo mật".
+- Cùng phần mềm adapter cũ: `tialuaviet`, `tuanchau`, `minhthu`, `htsaigon` (Vĩnh Hy); `lienson`, `myinvoicevn` (xcyber,
+  `g_300x75`; cổng hoadondientuvn.info chết 27/10); `evat` thêm hoadonsovn/tvl/vlc/trandinhtung.evat.vn + tracuu.ttltax.com;
+  `wininvoice` thêm 0311174986; `homecasta` (VININVOICE); `atis` (phần mềm VETC); `epay`, `atom` (phần mềm M-Invoice);
+  `iam` (T-HOADON 0318511655, IAM 0109193102), `suninvoice` (iam-entry như myinvoice/vininvoice — mỗi host CSDL riêng);
+  `vietinvoice` (iCORP, 2 cổng); `easyinvoice` nhận cả subdomain người bán (`0109045760hd.`; sửa regex Fkey có dấu `-`).
+- Captcha model (server nhận 10/10 mỗi cổng): `megabiz` `g_120x38`, `pvoil` `g_194x35`, `cloudteam` `g_120x40_cloud`
+  (cổng theo subdomain khách, lấy từ `lookup_url`).
+- Không captcha: `pmbk` (2 cổng Bách Khoa), `ptp`, `acman`, `avse`, `koffi`, `vietinfo`, `ehcm` (`formlookup.py` dùng chung),
+  `sonphat`, `aits`, `kimtuthap`, `intrust` (INTRUST + SCHOOL TECH; reCAPTCHA chỉ ở giao diện, server không kiểm), `sapo`,
+  `igas`, `sctv`, `mmhoadon`, `gohoadon`, `winvoice` (Khánh Linh, khác `wininvoice`), `vnpost` ("mã xác thực" chỉ kiểm ở trình duyệt).
+- Không làm được qua link (ghi ở sheet WBS2 cột Ghi chú): reCAPTCHA v2 (L.C.S, EFY, HT, Máy tính & TT, New-Invoice, idoc,
+  ACC Online, Safecert, CMC, Mobile-ID), v3 (FPT + đại lý oinvoice, VNPAY, Nhân Hòa, Haravan, Pancake, Taxnet, Bado), Turnstile
+  (TS24, Bizzi), đăng nhập (VDSG, NCCA, ONTIK, TAX24 — `tax24.com.vn/einvoice` là cổng đăng nhập, `g_180x50_tax24` là captcha
+  đăng nhập), model chưa dùng được (vninvoice, Ngô Gia Phát, Bitware, Lạc Việt), NC9/ameinvoice (máy chủ NCC lỗi DB). **Cần 1 mã
+  thật mới làm được:** KK VAT, Nacencomm, 3A, TADU (ZK `/zkau`) — script dò để trong scratchpad phiên 27/10.
+  FPT Shop `hddt.fptshop.com.vn`: tra bằng mã 16 số không cần captcha, nhưng bước tải trả **PDF của khách khác** → không làm.
 
 Không làm (26/10): `einvoice.com.vn` / `hoadon.ftg.vn` là Thái Sơn (cổng riêng yeungkyung., lotterentacarvina.einvoice.com.vn —
 mail đã kèm file; link `/xac-nhan-email/` **không bao giờ mở**); ameinvoice.vn (1 mail, đã kèm PDF); e-invoice-tt78.vingroup.net
@@ -567,6 +601,15 @@ MST bán mà tiêu đề chỉ có **tên** → bảng `MAIL_SELLERS` tên → M
 `tracking.hilo.com.vn` (link đếm click quảng cáo). **`invoice_from_link` trả None = link `ignored` vĩnh viễn**: thêm người bán vào
 `MAIL_SELLERS` thì phải đặt lại link cũ về `new` bằng tay. Chưa làm: `0105987432999hd.softdreams.vn` (PINK HEO, host chết,
 cổng EasyInvoice cần MST người bán chưa biết).
+**27/10, theo file user kiểm tay `output/mail/link_can_kiem_tay_20261027.xlsx`** (kết quả từng host: `..._xuly.xlsx`):
+`mail_reader` bắt thêm mã "Mã tra cứu nhanh", "Số bảo mật" (không có chữ "Mã"), "mã kiểm tra X" (không dấu `:`), tham số
+`maKTra`; và **MST người bán** ghi trong mail (`extract_seller_msts`, chỉ nhãn rõ là bên bán) → `email_messages.stats.seller_msts`
+→ `process_links` thêm dòng `MST người bán: X` vào `mail_text`. Nhờ đó: `minvoice` nhận link `tracuuhoadon.minvoice.vn`
+(MST bán + số bảo mật, thật 2/2); `vnpt` nhận `invoice-noibai.vietnamairport.vn` → cổng `han-tt78` theo mã tra cứu nhanh
+(`LINK_HOST_PORTALS`, thật 1/1 — link PdfDownload 2023 đã hết hạn, trả trang "Nhập tổng tiền") và host `-tt78` có dấu `_`.
+**Mail đã xử lý trước 27/10 không tự có mã/MST mới** (stats lưu lúc đọc mail) → phải sửa `stats` + đặt lại link về `new`.
+Không làm: CMC, EFY (`tracuu.ihoadon.vn`), FPT `?mst=&sec=` (reCAPTCHA, server kiểm), HDBank (OTP), Grab Zendesk, FPT Shop;
+ABBank (captcha ảnh, HĐ của Genuwin 1201547669 không phải công ty mình), Vingroup (captcha, chưa model).
 
 ## 2.7 Mail hóa đơn (`mail_reader.py`, `mail_ingest.py`)
 
@@ -595,6 +638,9 @@ cổng EasyInvoice cần MST người bán chưa biết).
   3. Chưa khớp được → `output/mail/unmatched/`; mỗi lượt khớp lại.
   4. Link + mã tra cứu → bảng `email_links` → `process_links`: adapter theo host (xem 2.6) tải PDF/XML,
      khớp HĐ như file đính kèm. Link lỗi thử lại tối đa 3 lần (`attempts`); host chưa có adapter thì để `new`.
+     **Mail đã kèm PDF hóa đơn thì không gọi cổng** (27/10): link → `mail_file`, dùng file trong mail (kể cả PDF đang
+     `unmatched`, lượt sau tự khớp). Lượt đầu chuyển 1.632 link backlog sang `mail_file`. Link hết 3 lần do lỗi môi trường
+     (vd `WinError 1114` nạp torch) phải đặt lại `attempts=0` bằng tay.
 - Lần chạy đầu (14/10, 42 mail): 9 PDF + 2 XML hthdon=2 lấy từ mail, trong đó có PDF của những
   NCC adapter chưa làm được (GSM, Jollibee, VNISC).
 - **Loại mail** (kiểm 20/10 trên hộp thật, quét thử chỉ đọc): XML + PDF đính kèm (cả trong .zip, mail forward

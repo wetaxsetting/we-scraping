@@ -2,10 +2,14 @@
 Nền tảng eVAT (<đại lý>.evat.vn, PHP) — mỗi đại lý 1 subdomain, cùng 1 form tra cứu.
 Đã kiểm thật: Phương Nam — MSTTCGP 0316642395 — https://phuongnam.evat.vn.
 
-Cùng nền tảng còn có hoadonsovn / tvl / vlc / trandinhtung.evat.vn (form giống hệt, gửi mã bịa
-trả "Mã công ty không tồn tại"), nhưng chưa có HĐ thật nên CHƯA nhận MSTTCGP của họ: có HĐ thật
-thì chỉ cần thêm 1 dòng vào PORTALS. tracuu.evat.vn KHÔNG phải nền tảng này nữa — nay chuyển hướng
-sang tracuu.wininvoice.vn (MSTTCGP 0312303803, khác phần mềm).
+Đại lý khác cùng nền tảng (thêm 27/10/2026 theo yêu cầu user, CHƯA có HĐ thật — chỉ kiểm phản hồi
+không tìm thấy): hoadonsovn / tvl / vlc / trandinhtung.evat.vn và tracuu.ttltax.com (tên miền riêng,
+title "eVAT System"). Mỗi cổng: GET / ra đúng form action="/bill" (private_code + cmpn_key + CSRF
+ẩn phtcsrf_tkns-<mã đại lý>), POST mã bịa không token → HTTP 200 "ERROR: Mã công ty không tồn tại",
+tức CSDL riêng theo đại lý (MST người bán của Phương Nam cũng báo không tồn tại) và không bị
+reCAPTCHA/đăng nhập chặn — kể cả tvl (Excel ghi "đăng nhập mới xem") và vlc (Excel ghi "lỗi máy chủ").
+tracuu.evat.vn KHÔNG phải nền tảng này nữa — nay chuyển hướng sang tracuu.wininvoice.vn (MSTTCGP
+0312303803, xem wininvoice.py).
 
 Mã tra cứu (XML của eVAT có TTKhac cấp hóa đơn):
     TTKhac "Mã tra cứu hóa đơn" (Id=privateCode)  vd TC6VO2832L — cũng in trên PDF / tiêu đề mail
@@ -33,9 +37,15 @@ from . import register
 from .base import PdfAdapter, PdfFetchError
 from .common import check_pdf_is_invoice, is_pdf, new_session, request
 
-# MSTTCGP → subdomain eVAT. Chỉ ghi đại lý đã kiểm bằng HĐ thật.
+# MSTTCGP → cổng eVAT. Phương Nam đã kiểm bằng HĐ thật; các dòng còn lại mới kiểm form + phản hồi
+# "Mã công ty không tồn tại" với mã bịa (27/10/2026), chưa có HĐ thật.
 PORTALS = {
     "0316642395": "phuongnam.evat.vn",      # Phương Nam (26/10/2026: 4/4)
+    "0315191291": "hoadonsovn.evat.vn",     # Trí Việt (CSRF phtcsrf_tkns-tvlgv)
+    "0311622035": "tvl.evat.vn",            # Trí Việt Luật
+    "0303211948": "vlc.evat.vn",            # V.L.C
+    "3702037020": "trandinhtung.evat.vn",   # Trần Đình Tùng
+    "0315194912": "tracuu.ttltax.com",      # TTL Tax (tên miền riêng, cùng phần mềm)
 }
 
 _FORM_RE = re.compile(r'<form[^>]*action="/bill"[^>]*>(.*?)</form>', re.S | re.I)
@@ -80,7 +90,7 @@ class EvatAdapter(PdfAdapter):
             if key in PORTALS:
                 return PORTALS[key]
         host = (urlsplit(str(invoice.get("lookup_url") or "")).hostname or "").lower()
-        if host.endswith(".evat.vn") and host != "tracuu.evat.vn":
+        if host in PORTALS.values() or (host.endswith(".evat.vn") and host != "tracuu.evat.vn"):
             return host
         return ""
 

@@ -63,6 +63,44 @@ from . import wininvoice  # noqa: E402,F401  WinInvoice tracuu.wininvoice.vn (03
 from . import rosysoft  # noqa: E402,F401  Rosy Soft einv.rosysoft.vn (0305142231) — Vinasun/Ánh Dương; không captcha
 from . import asiainvoice  # noqa: E402,F401  ASIA asiainvoice.vn (0101162173) — FKey chỉ có trong mail; captcha ddddocr
 from . import fahasa  # noqa: E402,F401  Fahasa hoadon.fahasa.com (FPT tự host) — chỉ qua link mail, không nhận MSTTCGP FPT
+from . import mobifone  # noqa: E402,F401  MobiFone tracuuhoadon(vienthong).mobifone.vn (0100686209) — số bảo mật từ mail, không captcha; PDF + XML
+# 27/10/2026: NCC trong docs/Danh_sach_NCC.xlsx chưa có HĐ thật — chỉ kiểm phản hồi "không tìm thấy"
+from . import tialuaviet  # noqa: E402,F401  Tia Lửa Việt (ihoadondientu.com) — phần mềm Vĩnh Hy
+from . import tuanchau  # noqa: E402,F401  Tuần Châu (e-invoicetuanchau.com) — phần mềm Vĩnh Hy
+from . import minhthu  # noqa: E402,F401  Minh Thư Vũng Tàu (hoadonminhthuvungtau.com) — phần mềm Vĩnh Hy
+from . import htsaigon  # noqa: E402,F401  HT Sài Gòn (ihoadondientu.net) — phần mềm Vĩnh Hy
+from . import lienson  # noqa: E402,F401  Liên Sơn (ls-invoiceapp.lienson.vn) — nền tảng xcyber, g_300x75
+from . import myinvoicevn  # noqa: E402,F401  My-Invoice 0106820789 (hoadondientuvn.info) — xcyber bill2app
+from . import ptp  # noqa: E402,F401  PTP-Invoice (hoadondientu-ptp.vn) — MST bán + số bảo mật
+from . import acman  # noqa: E402,F401  ACMan (hoadondientu.acman.vn) — form WebForms
+from . import avse  # noqa: E402,F401  Avsoft-Einvoice (hoadondientu.link/tracuutt78)
+from . import koffi  # noqa: E402,F401  Koffi/ZAMO (api.koffi.vn/invoices/code) — mã trong mail
+from . import vietinfo  # noqa: E402,F401  VietInfo (tracuuhoadon.vietinfo.tech) — mã + ngày HĐ
+from . import ehcm  # noqa: E402,F401  SaigonInvoice/eHCM (invoice.ehcm.vn) — form WebForms
+from . import kiotviet  # noqa: E402,F401  KiotViet (tracuuhoadon.kiotviet.vn) — mã mtc từ link mail; thật 1/1
+from . import homecasta  # noqa: E402,F401  Home Casta — cùng phần mềm VININVOICE
+from . import sonphat  # noqa: E402,F401  Sơn Phát (hoadon.sonphat.vn) — API lookupCode
+from . import atis  # noqa: E402,F401  ATIS — cùng phần mềm cổng VETC
+from . import aits  # noqa: E402,F401  AITS — MST bán + Số bảo mật
+from . import kimtuthap  # noqa: E402,F401  Kim Tự Tháp e-invoices.vn — mã bí mật GUID
+from . import intrust  # noqa: E402,F401  INTRUST / SCHOOL TECH lookupeinvoice.intrustdss.vn — reCAPTCHA server không kiểm
+from . import sapo  # noqa: E402,F401  Sapo Invoice invoice.sapo.vn — mã tra cứu, không captcha
+from . import igas  # noqa: E402,F401  IGAS tracuu.igas.vn — phần mềm VIET-INVOICE, không captcha
+from . import iam  # noqa: E402,F401  iam-entry: T-HOADON (0318511655) + IAM (0109193102) — MCCQT, không captcha
+from . import sctv  # noqa: E402,F401  SCTV tracuu-hddt.sctv.vn — số bảo mật, không captcha
+from . import mmhoadon  # noqa: E402,F401  MOMO E-INVOICE (0305289153) — mã tra cứu → id → PDF/XML
+from . import gohoadon  # noqa: E402,F401  GO HÓA ĐƠN (0111245245) — lookupCode, không captcha
+from . import epay  # noqa: E402,F401  EPAY (0108269133) — cổng M-invoice white-label, MST bán + số bảo mật
+from . import atom  # noqa: E402,F401  ATOM 1invoice (0316887099) — như epay
+from . import suninvoice  # noqa: E402,F401  SUN Invoice (0111488368) — cùng phần mềm myinvoice/vininvoice
+from . import winvoice  # noqa: E402,F401  W-INVOICE Khánh Linh (0307633556) — Mã tra cứu hóa đơn
+from . import vnpost  # noqa: E402,F401  VNPost (0102595740) — mã tra cứu; captcha chỉ ở trình duyệt
+from . import megabiz  # noqa: E402,F401  Megabiz vinvoice (0105844836) — captcha g_120x38 (server nhận 10/10)
+from . import pvoil  # noqa: E402,F401  PVOIL hoadon.pvoil.vn (0305795054) — captcha g_194x35 (10/10)
+from . import cloudteam  # noqa: E402,F401  Nhóm Mây cloudteam.vn (0312617990) — captcha g_120x40_cloud (10/10)
+from . import pmbk  # noqa: E402,F401  Bách Khoa hdbk / hoadonbachkhoa.pmbk.vn (0202029650, 0200784873) — mã tra cứu
+from . import vietinvoice  # noqa: E402,F401  VIET-INVOICE / iCORP (0106870211) — 2 cổng: API white-label + /erp/rest như vininvoice
+from . import wetax  # noqa: E402,F401  WeTax (api.wetax.com.vn) — chỉ link tải thẳng pdf/xml trong mail
 
 
 def supported_mst_tcgp() -> list:

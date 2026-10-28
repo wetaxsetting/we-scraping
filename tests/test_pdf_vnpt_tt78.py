@@ -251,7 +251,45 @@ def test_invoice_from_link_code_from_process_links_lines():
     assert a.invoice_from_link("https://abc-tt78.vnpt-invoice.com.vn/", FKEY, "")["ma_tra_cuu"] == FKEY
 
 
+PDF_LINK = "https://han-tt78.vnpt-invoice.com.vn/Email/PdfDownload?token=w3zk%2bKih%3d"   # token giả
+
+
+def test_invoice_from_link_email_pdf_download(monkeypatch):
+    a = vnpt.VnptAdapter()
+    inv = a.invoice_from_link(PDF_LINK, None, "ACV. Thông báo phát hành Hóa Đơn Điện Tử")
+    assert inv == {"email_pdf_token": "w3zk+Kih=", "lookup_url": "https://han-tt78.vnpt-invoice.com.vn"}
+    assert a.invoice_from_link("https://han-tt78.vnpt-invoice.com.vn/Email/PdfDownload", None, "") is None
+    calls = []
+    _router(monkeypatch, [("GET", "/Email/PdfDownload", _Resp(content=_pdf_with("So 123")))], calls)
+    assert common.is_pdf(a.fetch_pdf(dict(inv)))
+    assert calls[0][2]["params"] == {"token": "w3zk+Kih="}           # không giải captcha, không tra Fkey
+    with pytest.raises(PdfFetchError) as ei:                          # không có Fkey → XML bỏ qua, không gọi mạng
+        a.fetch_xml(dict(inv))
+    assert ei.value.kind == "no_code" and len(calls) == 1
+
+
+def test_invoice_from_link_noibai_and_underscore_host():
+    """ACV Nội Bài: link trang chủ invoice-noibai.vietnamairport.vn + "Mã tra cứu nhanh" → cổng han-tt78."""
+    a = vnpt.VnptAdapter()
+    assert pdf_providers.adapter_for_host("invoice-noibai.vietnamairport.vn") is pdf_providers.get_adapter("vnpt")
+    inv = a.invoice_from_link("https://invoice-noibai.vietnamairport.vn", None,
+                              "ACV. Thông báo phát hành Hóa Đơn Điện Tử\nX3100004261402EP")
+    assert inv == {"ma_tra_cuu": "X3100004261402EP", "tt_khac": {"Fkey": "X3100004261402EP"},
+                   "lookup_url": "https://han-tt78.vnpt-invoice.com.vn"}
+    inv = a.invoice_from_link("https://dimtutac_dongdu-tt78.vnpt-invoice.com.vn/Email/PdfDownload?token=SI4S%3d",
+                              None, "")
+    assert inv == {"email_pdf_token": "SI4S=", "lookup_url": "https://dimtutac_dongdu-tt78.vnpt-invoice.com.vn"}
+
+
+def test_email_pdf_download_not_pdf(monkeypatch):
+    _router(monkeypatch, [("GET", "/Email/PdfDownload", _Resp(content=b"<html>het han</html>"))], [])
+    with pytest.raises(PdfFetchError) as ei:
+        vnpt.VnptAdapter().fetch_pdf({"email_pdf_token": "x", "lookup_url": "https://han-tt78.vnpt-invoice.com.vn"})
+    assert ei.value.kind == "no_pdf"
+
+
 @pytest.mark.parametrize("url, text", [
+    ("https://han-tt78.vnpt-invoice.com.vn/invoice/getinvoice?token=abc", "ACV"),          # link khác cùng mail
     ("https://vttphcm-tt78.vnpt-invoice.com.vn/", "Để tải hóa đơn điện tử vui lòng truy cập: ..."),  # không mã
     ("https://vttphcm-tt78.vnpt-invoice.com.vn/", "FW: Tổng hợp thông báo cước"),
     ("https://portal-hst.vnpt-invoice.com.vn/", MAIL),                     # cổng VNPT khác: chưa nhận link

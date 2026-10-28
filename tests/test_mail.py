@@ -144,6 +144,29 @@ def test_links_and_codes_extraction_skips_tracking_and_images():
     assert mail_reader.extract_codes("Mã tra cứu hóa đơn: HCM10013369202609") == ["HCM10013369202609"]  # VNPT
 
 
+@pytest.mark.parametrize("text, codes, msts", [
+    # ACV Nội Bài (VNPT han-tt78)
+    ("- Ký hiệu: K23TBP\n - Mã tra cứu nhanh: X3100004261402EP", ["X3100004261402EP"], []),
+    # M-Invoice: "Số bảo mật" không có chữ "Mã"; câu hướng dẫn "Nhập mã Số bảo mật cung cấp" không phải mã
+    ("Bước 3: Nhập mã  Số bảo mật  cung cấp phía dưới\n MST người bán:  0313217924 \n"
+     " Số bảo mật:  E864CA9903996CF4 ", ["E864CA9903996CF4"], ["0313217924"]),
+    # ABBank: không có dấu ':'
+    ("truy cập đường dẫn https://einvoice.abbank.vn/tracuu/xac-minh-hoa-don với mã kiểm tra TPxfOptZ2j.",
+     ["TPxfOptZ2j"], []),
+    # Vingroup: MST đơn vị phát hành; "Mã số thuế (Tax code)" trơn không tính là người bán
+    ("Mã số thuế đơn vị phát hành hóa đơn:  0106050554-001 \n Mã bí mật:  VWZQR2JX \n"
+     "Mã số thuế (Tax code) : 1201547669", ["VWZQR2JX"], ["0106050554-001"]),
+])
+def test_codes_and_seller_mst_in_text(text, codes, msts):
+    assert mail_reader.extract_codes(text) == codes
+    assert mail_reader.extract_seller_msts(text) == msts
+
+
+def test_abbank_link_code_param():
+    links = mail_reader.extract_links('<a href="https://einvoice.abbank.vn/tracuu/xac-minh-hoa-don?maKTra=oor5KL0kCH">')
+    assert [(l.host, l.code) for l in links] == [("einvoice.abbank.vn", "oor5KL0kCH")]
+
+
 # ---------------------------------------------------------------------------
 # mail_ingest với store giả
 # ---------------------------------------------------------------------------
@@ -407,6 +430,18 @@ def test_link_skipped_when_invoice_already_has_pdf(tmp_path, link_adapter):
     store.links[0]["invoice_id"] = 1
     mail_ingest.MailIngest(store, tmp_path).process_links(Counter())
     assert a.calls == [] and store.links[0]["status"] == "done"
+
+
+def test_link_not_fetched_when_mail_already_has_pdf(tmp_path, link_adapter):
+    a = link_adapter(pdf=b"%PDF-x")
+    store = _link_store("https://tracuu.fake-hd.vn/?mst=0100112233&sec=K1",
+                        "https://cong-chua-co-adapter.vn/?sec=1", invoices=[_inv()])
+    for l in store.links:
+        l["mail_has_pdf"] = True                       # mail đã kèm PDF → dùng file trong mail
+    stats = Counter()
+    mail_ingest.MailIngest(store, tmp_path).process_links(stats)
+    assert a.calls == [] and [l["status"] for l in store.links] == ["mail_file", "mail_file"]
+    assert stats["link_mail_has_file"] == 2 and store.links[0]["attempts"] == 0
 
 
 @pytest.mark.parametrize("url,expected", [

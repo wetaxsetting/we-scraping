@@ -215,6 +215,9 @@ class _Resp:
         return self._body
 
 
+SCO_CAPTCHA = {"ckey": "k1", "cvalue": "AB12C"}
+
+
 def _capture(monkeypatch, content=XLSX):
     seen = {}
 
@@ -222,6 +225,7 @@ def _capture(monkeypatch, content=XLSX):
         seen.update(url=url, headers=headers, params=params)
         return _Resp(200, content)
     monkeypatch.setattr(api_client._gdt_session, "get", fake_get)
+    monkeypatch.setattr(api_client, "sco_captcha", lambda: dict(SCO_CAPTCHA))   # sco-query bắt captcha (10/2026)
     return seen
 
 
@@ -237,7 +241,7 @@ PORTAL_URLS = {
     ("mua-mtt", "2026-08-01", "2026-08-31"):
         "https://hoadondientu.gdt.gov.vn/api/sco-query/invoices/export-excel-sold?sort=tdlap:desc"
         "&search=tdlap=ge=01/08/2026T00:00:00;tdlap=le=31/08/2026T23:59:59;ttxly==8%20%20%20%20"
-        "&type=purchase",
+        "&type=purchase&ckey=k1&cvalue=AB12C",       # từ 10/2026 cổng gửi kèm captcha (popup withCaptcha)
 }
 
 
@@ -262,6 +266,7 @@ def test_export_url_for_types_without_portal_sample(monkeypatch, sub_type, path,
     assert seen["url"] == api_client.API_BASE + path
     assert seen["params"]["search"].endswith(f";ttxly=={ttxly}    " if ttxly else "T23:59:59")
     assert seen["params"].get("type") == ("purchase" if sub_type.startswith("mua") else None)
+    assert ("ckey" in seen["params"]) == path.startswith("/sco-query")
 
 
 @pytest.mark.parametrize("resp, kind", [

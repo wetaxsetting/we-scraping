@@ -55,6 +55,10 @@ Mail Petrolimex ("Thông báo phát hành <tên người bán>", 26/10): link tr
 lookup_url; PDF khớp HĐ theo chữ trong PDF (mail_ingest._match_pdf_text). 65 mã khác nhau, 17 mã trùng
 ma_tra_cuu của HĐ trong DB.
 
+Mail cổng -tt78 (ACV Nội Bài han-tt78, Navigos navigos-tt78; kiểm 27/10) có link
+"/Email/PdfDownload?token=..." → GET đúng URL đó trả PDF luôn, không captcha, không cần mã tra cứu
+(thật 2/2). Link "/invoice/getinvoice?token=" và "/Email/EmailInvoiceView" cùng mail → bỏ qua.
+
 Chưa làm: cổng tracuuhoadon.vnpt-invoice.com.vn.
 """
 from __future__ import annotations
@@ -107,7 +111,13 @@ _ERRORBOX_RE = re.compile(r'class="errorbox">.*?/>\s*(.*?)<', re.S)
 _CHECKCODE_RE = re.compile(r"ajxCall4Portal\w*\('([^']+)'")
 
 # Cổng mẫu TT78 riêng của từng khách hàng VNPT
-_TT78_HOST_RE = re.compile(r"^[a-z0-9][a-z0-9-]*-tt78\.vnpt-invoice\.com\.vn$")
+_TT78_HOST_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*-tt78\.vnpt-invoice\.com\.vn$")   # có cả "dimtutac_dongdu-tt78"
+# Tên miền riêng của người bán trỏ về cổng -tt78 (link trong mail chỉ là trang chủ + "Mã tra cứu nhanh").
+# ACV Nội Bài: mail 2023 có link PdfDownload han-tt78 đã hết hạn (trả trang "Nhập tổng tiền"), nhưng
+# mã tra cứu nhanh (= Fkey) vẫn tra được trên han-tt78 (thật 1/1, 27/10).
+LINK_HOST_PORTALS = {
+    "invoice-noibai.vietnamairport.vn": "https://han-tt78.vnpt-invoice.com.vn",
+}
 TT78_SEARCH_TIMEOUT = 45          # HĐ có: < 1 s; không có: server treo → hết giờ = không thấy
 _CODE_CACHE_MAX = 200
 # "Mã tra cứu hóa đơn: HCM10013369202609" (mail "Thông báo phát hành HDDT")
@@ -183,7 +193,7 @@ class VnptAdapter(PdfAdapter):
     name = "VNPT Invoice"
     mst_tcgp = ("0100684378",)
     # link mail: cổng <alias>-tt78 và cổng riêng dạng SearchInvoicebycode (PORTALS, vd Petrolimex)
-    hosts = ("vnpt-invoice.com.vn", "hoadon.petrolimex.com.vn")
+    hosts = ("vnpt-invoice.com.vn", "hoadon.petrolimex.com.vn", *LINK_HOST_PORTALS)
 
     def __init__(self):
         self._codes: dict = {}            # (cổng, Fkey) → checkCode: fetch_xml + fetch_pdf chỉ giải 1 captcha
@@ -234,8 +244,13 @@ class VnptAdapter(PdfAdapter):
         Cổng VNPT khác (HST, tracuuhoadon...) hoặc không có mã → None.
         """
         host = (urlsplit(url).hostname or "").lower()
+        if _TT78_HOST_RE.match(host) and urlsplit(url).path.rstrip("/").lower() == "/email/pdfdownload":
+            token = link_params(url).get("token")         # link "Tải PDF" trong mail: tải thẳng, không captcha
+            return {"email_pdf_token": token, "lookup_url": f"https://{host}"} if token else None
         if _TT78_HOST_RE.match(host):
             base = f"https://{host}"
+        elif host in LINK_HOST_PORTALS:
+            base = LINK_HOST_PORTALS[host]
         else:
             base = _portal_by_host(host)
             if not base:
@@ -263,6 +278,8 @@ class VnptAdapter(PdfAdapter):
         return inv
 
     def fetch_pdf(self, invoice: dict) -> bytes:
+        if invoice.get("email_pdf_token"):
+            return self._email_pdf(invoice)
         fkey = self.fkey(invoice)
         ma_cqt = (invoice.get("ma_cqt") or "").strip()
         if not fkey and not ma_cqt:
@@ -354,6 +371,17 @@ class VnptAdapter(PdfAdapter):
         if shdon and (not m or m.group(1).decode() != shdon):
             raise PdfFetchError(f"XML tải về không phải HĐ số {shdon}", "bad_content")
         return data
+
+    def _email_pdf(self, invoice: dict) -> bytes:
+        base = (invoice.get("lookup_url") or "").rstrip("/")
+        if not _is_tt78(base):
+            raise PdfFetchError("Link PdfDownload chỉ nhận cổng VNPT -tt78", "no_portal")
+        r = request(new_session(), "GET", f"{base}/Email/PdfDownload",
+                    params={"token": invoice["email_pdf_token"]})
+        if not is_pdf(r.content):
+            raise PdfFetchError(f"VNPT {base} PdfDownload trả không phải PDF (HTTP {r.status_code})", "no_pdf")
+        check_pdf_is_invoice(r.content, invoice)
+        return r.content
 
     def _tt78_pdf(self, base: str, fkey: str, invoice: dict) -> bytes:
         r = request(new_session(), "GET", f"{base}/HomeNoLogin/downloadPDF",

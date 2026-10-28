@@ -353,3 +353,26 @@ def test_cli_wires_worker_and_sync_lists(monkeypatch):
     assert invoice_job.main(["worker", "--type", "pdf", "--per-company", "5", "--once"]) == 0
     assert seen["type"] == "pdf" and seen["per_company"] == 5 and seen["once"] is True
     assert seen["batch"] == invoice_job.WORKER_BATCH
+
+
+def test_gdt_429_backs_off_instead_of_hammering(monkeypatch, tmp_path):
+    """26/10: 5 lần 429 trong 4 giây (nhịp 0,7 s) làm ngắt mạch dừng cả lượt main_auto."""
+    slept, calls = [], {"n": 0}
+    monkeypatch.setattr(invoice_job.time, "sleep", slept.append)
+
+    def flaky(store, company, tokens, task, run_id, out_dir):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise invoice_job.api_client.GDTError("429 – Quá nhiều request, cần chờ", kind="rate_limit")
+
+    class _Fail(_WorkerStore):
+        def fail_task(self, task, kind, msg, run_id):
+            return "pending"
+
+    monkeypatch.setattr(invoice_job, "_do_xml_task", flaky)
+    stats = invoice_job.Counter()
+    breaker = invoice_job.job_policy.CircuitBreaker()
+    co = {"company_mst": A, "gdt_username": A}
+    invoice_job.xml_batch(_Fail([]), co, object(), breaker, 1, [_task(A, i) for i in range(1, 5)], stats, tmp_path)
+    assert [s for s in slept if s >= 60] == [60, 120]          # nghỉ tăng dần sau mỗi 429
+    assert stats["xml_ok"] == 2 and not breaker.open

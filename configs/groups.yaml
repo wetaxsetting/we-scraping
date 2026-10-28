@@ -312,7 +312,7 @@ groups:
   sizes:
   - - 200
     - 80
-  charset: 23456789abcdefghijklmnopqrstuvxyz
+  charset: 23456789abcdefhjklmnpqrstuvxyz
   charset_mode: core
   min_freq: 0.005
   review: false
@@ -321,7 +321,7 @@ groups:
   in_channels: 1
   clahe: false
   clip_above: null
-  note: (200, 80) n=1387 len 5-5 drop 2.4% ring_raw 0 [tu env/g_200x80]
+  note: "(200, 80) len 5. Bang chu that 30 ky tu (27/10): toan chu thuong, khong co 0 1 g i o w. 28/10: 2.575 anh, da ha chu HOA (lower_labels_20261028.csv), core bo 53 anh con g/1/i/w; train ~322 mau/ky tu"
 - group_id: g_70x23
   sizes:
   - - 70

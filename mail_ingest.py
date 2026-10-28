@@ -12,7 +12,8 @@ Mỗi mail (trong N ngày gần nhất, chưa xem):
          lượt sau khớp lại.
   3. PDF đính kèm → ghép với XML cùng mail (theo số HĐ), hoặc dò trong chữ của PDF
      (MST người bán + ký hiệu + số HĐ). Khớp → làm PDF bản gốc (source 'email').
-  4. Link tra cứu + mã trong nội dung → bảng email_links (KHÔNG tự mở link).
+  4. Link tra cứu + mã trong nội dung → bảng email_links (KHÔNG tự mở link). Chỉ gọi cổng tra cứu
+     khi mail KHÔNG kèm PDF hóa đơn — có file trong mail thì ưu tiên file, đỡ tốn thời gian.
 """
 from __future__ import annotations
 
@@ -247,6 +248,8 @@ class MailIngest:
         local["links"] = self.store.add_email_links(email_id, links,
                                                     next(iter(matched)) if len(matched) == 1 else None)
         local["codes"] = pm.codes
+        if pm.seller_msts:
+            local["seller_msts"] = pm.seller_msts
         stats["links_new"] += local["links"]
         if pm.files:
             status = ("done" if not local["unmatched"] else "partial" if local["matched"] else "unmatched")
@@ -260,15 +263,21 @@ class MailIngest:
         Mail chỉ có link/mã tra cứu (vd HĐ hthdon=2: Thuế không có XML) → adapter của cổng (theo host)
         dựng HĐ từ tham số link/mã (KHÔNG mở link), rồi tải PDF (+ XML nếu adapter có fetch_xml) qua
         endpoint tra cứu của chính nó. Kết quả khớp vào HĐ như file đính kèm.
+        Mail đã kèm PDF hóa đơn thì dùng file đó, không gọi cổng (link → 'mail_file').
         """
         import job_policy
         import pdf_providers
         breakers, done_mail, handled = {}, set(), 0
         for link in self.store.pending_email_links():
+            if link.get("mail_has_pdf"):
+                self.store.set_email_link(link["id"], "mail_file")
+                stats["link_mail_has_file"] += 1
+                continue
             adapter = pdf_providers.adapter_for_host(link["host"])
             if adapter is None:
                 continue                      # chưa có adapter cho cổng này: để 'new', có adapter thì làm
-            mail_text = "\n".join([link.get("subject") or ""] + list(link.get("mail_codes") or []))
+            mail_text = "\n".join([link.get("subject") or ""] + list(link.get("mail_codes") or [])
+                                  + [f"MST người bán: {m}" for m in link.get("mail_seller_msts") or []])
             inv = adapter.invoice_from_link(link["url"], link.get("code"), mail_text)
             if inv is None:                   # link không dùng được (trang chủ, hủy nhận mail...)
                 self.store.set_email_link(link["id"], "ignored")

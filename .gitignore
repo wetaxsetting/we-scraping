@@ -58,6 +58,10 @@ runs/*
 !runs/g_80x30/
 !runs/g_1500x350/
 !runs/g_300x75/
+# 27/10: Megabiz | PVOIL | Nhóm Mây
+!runs/g_120x38/
+!runs/g_194x35/
+!runs/g_120x40_cloud/
 runs/*/*
 !runs/*/best.pt
 !runs/*/history.csv

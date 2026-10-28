@@ -172,4 +172,41 @@ def test_invoice_from_link():
 
 def test_declares_mst_tcgp():
     a = evat.EvatAdapter()
-    assert a.source_id == "evat" and a.mst_tcgp == ("0316642395",) and a.hosts == ("phuongnam.evat.vn",)
+    assert a.source_id == "evat"
+    assert set(a.mst_tcgp) == {"0316642395", "0315191291", "0311622035", "0303211948", "3702037020",
+                               "0315194912"}
+    assert set(a.hosts) == {"phuongnam.evat.vn", "hoadonsovn.evat.vn", "tvl.evat.vn", "vlc.evat.vn",
+                            "trandinhtung.evat.vn", "tracuu.ttltax.com"}
+
+
+@pytest.mark.parametrize("mst, host, csrf", [
+    ("0315191291", "hoadonsovn.evat.vn", "phtcsrf_tkns-tvlgv"),
+    ("0311622035", "tvl.evat.vn", "phtcsrf_tkns-tvl"),
+    ("0303211948", "vlc.evat.vn", "phtcsrf_tkns-vlc"),
+    ("3702037020-001", "trandinhtung.evat.vn", "phtcsrf_tkns-tdt"),
+    ("0315194912", "tracuu.ttltax.com", "phtcsrf_tkns-ttl2"),
+])
+def test_other_agencies_use_own_portal(monkeypatch, mst, host, csrf):
+    base, calls = f"https://{host}", []
+    home = _Resp(f'<form action="/bill" method="post"><input type="hidden" name="{csrf}" value="t"/></form>')
+
+    def fake(session, method, url, **kw):
+        calls.append((method, url, kw))
+        if method == "GET" and url == base + "/":
+            return home
+        if method == "POST" and url == base + "/bill":
+            return NO_COMPANY
+        raise AssertionError(f"không có route cho {method} {url}")
+    monkeypatch.setattr(evat, "request", fake)
+    monkeypatch.setattr(evat, "new_session", lambda: object())
+    with pytest.raises(PdfFetchError) as ei:
+        evat.EvatAdapter().fetch_pdf(dict(INV, mst_tcgp=mst))
+    assert ei.value.kind == "no_portal"
+    assert [kw for m, _, kw in calls if m == "POST"][0]["data"][csrf] == "t"
+
+
+def test_ttltax_link_and_lookup_url():
+    a = evat.EvatAdapter()
+    assert a.portal({"mst_tcgp": "", "lookup_url": "https://tracuu.ttltax.com/"}) == "tracuu.ttltax.com"
+    inv = a.invoice_from_link("https://tracuu.ttltax.com", "TC6VO2832L", "Mã công ty: 0313632864")
+    assert inv["mst_tcgp"] == "0315194912"

@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS email_links (
     host       TEXT NOT NULL,
     code       TEXT,
     invoice_id BIGINT REFERENCES invoices ON DELETE SET NULL,
-    status     TEXT NOT NULL DEFAULT 'new',     -- new | done | failed | ignored
+    status     TEXT NOT NULL DEFAULT 'new',     -- new | done | failed | ignored | mail_file (mail đã kèm PDF)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (email_id, url)
 );

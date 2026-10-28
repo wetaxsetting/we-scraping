@@ -24,7 +24,9 @@ Quy trình (mỗi hệ thống):
   4. GET  {api_host}/File/DownloadTempFile?fileType&fileToken&fileName → PDF (Content-Type ghi text/xml).
        fileToken dùng 1 lần: gọi lại thì server chuyển hướng vòng → tắt redirect.
 Trang có nạp recaptcha/api.js nhưng không có widget, server không đòi token reCAPTCHA.
-Cùng nền tảng xcyber còn Liên Sơn / My-Invoice — chưa kiểm trên HĐ thật nên chưa nhận MST của họ.
+Cùng nền tảng xcyber còn các nhà bán lại, mỗi nhà khai `SYSTEMS` riêng bằng lớp con:
+Liên Sơn (lienson.py, API riêng ls-invoiceapp.lienson.vn), My-Invoice 0106820789 (myinvoicevn.py,
+dùng chung API bill2app.xcyber.vn).
 """
 from __future__ import annotations
 
@@ -62,6 +64,7 @@ class XcyberAdapter(PdfAdapter):
     name = "CyberLotus (xcyber)"
     mst_tcgp = ("0105232093",)
     hosts = ("xcyber.vn", "cyberbill.vn")
+    SYSTEMS = SYSTEMS          # lớp con (nhà bán lại) ghi đè bằng API + trang tra cứu của họ
 
     def invoice_from_link(self, url: str, code, mail_text: str):
         """Mail CyberLotus: mã tra cứu 12/15 ký tự (trong mail hoặc tham số link). Không mở link."""
@@ -69,7 +72,7 @@ class XcyberAdapter(PdfAdapter):
         secret = (code or p.get("masobimat") or p.get("matracuu") or "").strip()
         if not _CODE_RE.match(secret):
             return None
-        return {"ma_tra_cuu": secret, "tt_khac": {"MaTraCuu": secret}}
+        return {"mst_tcgp": self.mst_tcgp[0], "ma_tra_cuu": secret, "tt_khac": {"MaTraCuu": secret}}
 
     @staticmethod
     def lookup_code(invoice: dict) -> str:
@@ -79,11 +82,11 @@ class XcyberAdapter(PdfAdapter):
     def fetch_pdf(self, invoice: dict) -> bytes:
         code = self.lookup_code(invoice)
         if not code:
-            raise PdfFetchError("XML không có 'MaTraCuu' (mã tra cứu CyberLotus)", "no_code")
+            raise PdfFetchError(f"XML không có 'MaTraCuu' (mã tra cứu {self.name})", "no_code")
         if not _CODE_RE.match(code):
-            raise PdfFetchError(f"Mã tra cứu CyberLotus phải dài 12/15 ký tự: {code!r}", "no_code")
+            raise PdfFetchError(f"Mã tra cứu {self.name} phải dài 12/15 ký tự: {code!r}", "no_code")
         server_errors = []
-        for api_host, site in SYSTEMS:
+        for api_host, site in self.SYSTEMS:
             try:
                 pdf = self._fetch_on(api_host, site, code)
             except _NotHere:
@@ -97,7 +100,8 @@ class XcyberAdapter(PdfAdapter):
             return pdf
         if server_errors:
             raise PdfFetchError("; ".join(server_errors)[:500], "server")
-        raise PdfFetchError(f"CyberLotus không tìm thấy HĐ (mã {code}) trên cả 2 hệ thống", "no_pdf")
+        raise PdfFetchError(f"{self.name} không tìm thấy HĐ (mã {code}) trên {len(self.SYSTEMS)} hệ thống",
+                            "no_pdf")
 
     def _fetch_on(self, api_host: str, site: str, code: str) -> bytes:
         headers = {"Content-Type": "application/json", "Accept": "application/json",
@@ -110,7 +114,7 @@ class XcyberAdapter(PdfAdapter):
                 break
             except _WrongCaptcha:
                 if attempt == CAPTCHA_TRIES:
-                    raise PdfFetchError(f"CyberLotus ({api_host}) từ chối captcha {CAPTCHA_TRIES} lần",
+                    raise PdfFetchError(f"{self.name} ({api_host}) từ chối captcha {CAPTCHA_TRIES} lần",
                                         "captcha")
         return self._download(s, api_host, api, headers, key, code)
 

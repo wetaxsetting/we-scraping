@@ -34,7 +34,10 @@ HOST = "tracuu.wininvoice.vn"
 class WinInvoiceAdapter(EvatAdapter):
     source_id = "wininvoice"
     name = "WinInvoice (tracuu.wininvoice.vn)"
-    mst_tcgp = ("0312303803",)
+    # 0311174986 Trường Minh Thịnh: Excel NCC ghi cổng tra cứu là tracuu.wininvoice.vn (đại lý dùng chung
+    # cổng/CSDL WinInvoice; form tra theo "Mã công ty" = MST người bán nên không phụ thuộc MSTTCGP).
+    # Thêm 27/10/2026, chưa có HĐ thật — chỉ kiểm form /bill còn nguyên trên cổng.
+    mst_tcgp = ("0312303803", "0311174986")
     hosts = ("wininvoice.vn", "tracuu.evat.vn")     # gồm tracuu.wininvoice.vn
 
     @staticmethod

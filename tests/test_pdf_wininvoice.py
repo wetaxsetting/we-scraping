@@ -128,6 +128,13 @@ def test_invoice_from_link():
 
 def test_declares():
     a = wininvoice.WinInvoiceAdapter()
-    assert a.source_id == "wininvoice" and a.mst_tcgp == ("0312303803",)
+    assert a.source_id == "wininvoice" and a.mst_tcgp == ("0312303803", "0311174986")
     assert set(a.hosts) == {"wininvoice.vn", "tracuu.evat.vn"}
     assert set(a.hosts).isdisjoint(evat.EvatAdapter.hosts)
+
+
+def test_truong_minh_thinh_uses_wininvoice_portal(monkeypatch):
+    calls = []
+    _setup(monkeypatch, calls)
+    wininvoice.WinInvoiceAdapter().fetch_pdf(dict(INV, mst_tcgp="0311174986"))
+    assert all(u.startswith(BASE) for _, u, _ in calls)

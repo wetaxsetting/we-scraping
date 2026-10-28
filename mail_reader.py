@@ -33,14 +33,21 @@ MAX_FILE_BYTES = 20 * 1024 * 1024      # bỏ file đính kèm / file trong zip 
 
 _KEYWORDS = ("hoa don", "invoice", "hddt", "ma tra cuu", "tra cuu hoa don", "einvoice", "e-invoice")
 _CODE_LABEL_RE = re.compile(
-    r"(m[ãa]\s*(?:s[ốo]\s*)?(?:tra\s*c[ứu]u(?:\s*h[óo]a\s*[đd][ơo]n)?|nh[ậa]n\s*h[óo]a\s*[đd][ơo]n"
-    r"|b[íi]\s*m[ậa]t|b[ảa]o\s*m[ậa]t)"
-    r"|m[ãa]\s*tc|fkey|lookup\s*code|search\s*key)"
+    r"(m[ãa]\s*(?:s[ốo]\s*)?(?:tra\s*c[ứu]u(?:\s*h[óo]a\s*[đd][ơo]n|\s*nhanh)?|nh[ậa]n\s*h[óo]a\s*[đd][ơo]n"
+    r"|b[íi]\s*m[ậa]t|b[ảa]o\s*m[ậa]t|ki[ểe]m\s*tra)"
+    r"|s[ốo]\s*b[ảa]o\s*m[ậa]t|m[ãa]\s*tc|fkey|lookup\s*code|search\s*key)"
     r"\s*(?:\([^)]{0,30}\))?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9_\-\*\.]{4,59})", re.I)
 _URL_RE = re.compile(r"https?://[^\s\"'<>)\]]+", re.I)
 # Tham số trên link tra cứu thường chứa mã (so khớp chữ thường)
 _URL_CODE_PARAMS = ("lookupcode", "fkey", "key", "matracuu", "ma_tra_cuu", "mtc", "code", "sobaomat",
-                    "transactionid", "invoiceguid", "searchkey", "secureid", "keysearch", "id")
+                    "transactionid", "invoiceguid", "searchkey", "secureid", "keysearch", "maktra", "id")
+# MST người bán ghi trong mail ("MST người bán: 0313217924" — M-Invoice; "Mã số thuế đơn vị phát hành
+# hóa đơn: 0106050554-001" — Vingroup). Chỉ nhãn nói rõ là bên bán, không lấy "Mã số thuế" trơn
+# (mail thường in cả MST người mua).
+_SELLER_MST_RE = re.compile(
+    r"(?:mst|m[ãa]\s*s[ốo]\s*thu[ếe])\s*(?:c[ủu]a\s*)?"
+    r"(?:ng[ưu][ờo]i\s*b[áa]n|[đd][ơo]n\s*v[ịi]\s*(?:b[áa]n|ph[áa]t\s*h[àa]nh(?:\s*h[óo]a\s*[đd][ơo]n)?))"
+    r"\s*[:：]?\s*(\d{10}(?:-\d{3})?)\b", re.I)
 # Link không phải cổng tra cứu: theo dõi mở mail, ảnh, mạng xã hội, chính công ty mình
 _SKIP_HOST_PARTS = ("w3.org", "webcashvietnam.com", "schemas.microsoft.com", "google.com", "gstatic",
                     "googleusercontent", "googleapis", "facebook.com", "youtube.com", "zalo.me",
@@ -101,6 +108,7 @@ class ParsedMail:
     files: list = field(default_factory=list)       # [MailFile]
     links: list = field(default_factory=list)       # [MailLink]
     codes: list = field(default_factory=list)       # mã tra cứu ghi trong nội dung
+    seller_msts: list = field(default_factory=list) # MST người bán ghi trong nội dung
     attachment_names: list = field(default_factory=list)
 
     @property
@@ -174,6 +182,11 @@ def extract_codes(text: str) -> list:
     return out
 
 
+def extract_seller_msts(text: str) -> list:
+    """MST người bán ghi trong nội dung (cổng tra theo MST bán + mã, vd M-Invoice)."""
+    return list(dict.fromkeys(_SELLER_MST_RE.findall(text or "")))
+
+
 def parse_message(raw: bytes, _depth: int = 0) -> ParsedMail:
     msg = email.message_from_bytes(raw)
     texts, raws, files, names = [], [], [], []
@@ -226,6 +239,7 @@ def parse_message(raw: bytes, _depth: int = 0) -> ParsedMail:
         files=files,
         links=extract_links(raw_text),
         codes=extract_codes(text),
+        seller_msts=extract_seller_msts(text),
         attachment_names=names,
     )
 

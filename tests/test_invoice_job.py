@@ -75,6 +75,26 @@ def test_sync_windows_fills_gap_after_long_pause():
     assert len(w) == 3
 
 
+@pytest.mark.parametrize("start,end", [
+    (date(2023, 1, 31), date(2023, 3, 1)),     # 30 ngày nhưng > 1 tháng: GDT trả 400 (26/10/2026)
+    (date(2025, 1, 30), date(2025, 2, 28)),
+    (date(2026, 2, 1), date(2026, 3, 2)),
+])
+def test_chunk_never_exceeds_one_calendar_month(start, end):
+    chunks = job_policy.chunk_range(start, end)
+    _assert_contiguous(chunks, start, end)
+    for s, e in chunks:
+        assert e <= job_policy._month_limit(s)
+    assert len(chunks) == 2
+
+
+def test_month_limit():
+    assert job_policy._month_limit(date(2023, 1, 31)) == date(2023, 2, 27)
+    assert job_policy._month_limit(date(2024, 1, 31)) == date(2024, 2, 28)
+    assert job_policy._month_limit(date(2023, 3, 2)) == date(2023, 4, 1)
+    assert job_policy._month_limit(date(2025, 12, 15)) == date(2026, 1, 14)
+
+
 def test_month_bounds():
     assert job_policy.month_bounds(None, date(2026, 1, 5)) == (date(2025, 12, 1), date(2025, 12, 31))
     assert job_policy.month_bounds("2026-02", TODAY) == (date(2026, 2, 1), date(2026, 2, 28))
@@ -687,3 +707,72 @@ def test_classify():
     assert invoice_job.classify(requests.exceptions.ConnectionError()) == "network"
     assert invoice_job.classify(RuntimeError("Rate limit 429 sau 4 lần thử")) == "rate_limit"
     assert invoice_job.classify(ValueError("x")) == "other"
+
+
+# ---------------------------------------------------------------------------
+# sco-query (HĐ máy tính tiền) bắt buộc captcha từ 10/2026
+# ---------------------------------------------------------------------------
+
+class _JsonResp:
+    def __init__(self, data):
+        self._d = data
+
+    def json(self):
+        return self._d
+
+
+@pytest.fixture
+def sco_caps(monkeypatch):
+    caps = []
+
+    def fake():
+        caps.append({"ckey": f"k{len(caps)}", "cvalue": "ABCDE"})
+        return caps[-1]
+    monkeypatch.setattr(api_client, "sco_captcha", fake)
+    monkeypatch.setattr(api_client.time, "sleep", lambda s: None)
+    return caps
+
+
+def test_sco_list_sends_fresh_captcha_and_retries_wrong_one(monkeypatch, sco_caps):
+    sent = []
+
+    def fake_get(token, ep, params, timeout=60):
+        sent.append(dict(params))
+        if len(sent) == 1:
+            raise RuntimeError("API GDT trả lỗi 400: Mã captcha không đúng")
+        return _JsonResp({"datas": [{"shdon": 1}], "total": 1})
+    monkeypatch.setattr(api_client, "_do_get", fake_get)
+    rows = api_client.fetch_invoices_subtype("t", "mua-mtt", "2026-09-01", "2026-09-30")
+    assert len(rows) == 1 and len(sent) == 2
+    assert sent[0]["ckey"] == "k0" and sent[1]["ckey"] == "k1" and sent[1]["cvalue"] == "ABCDE"
+
+
+def test_non_sco_list_needs_no_captcha(monkeypatch, sco_caps):
+    sent = []
+    monkeypatch.setattr(api_client, "_do_get",
+                        lambda token, ep, params, timeout=60: sent.append(params) or _JsonResp({"datas": []}))
+    api_client.fetch_invoices_subtype("t", "mua", "2026-09-01", "2026-09-30")
+    assert sco_caps == [] and "ckey" not in sent[0]
+
+
+def test_sco_export_retries_when_gdt_asks_for_ckey(monkeypatch, sco_caps):
+    sent = []
+
+    def fake_once(token, ep, params, timeout):
+        sent.append(params)
+        if len(sent) == 1:
+            raise api_client.GDTError("GDT không trả file Excel (500): Required request parameter 'ckey' "
+                                      "for method parameter type String is not present", kind="other")
+        return b"PK\x03\x04"
+    monkeypatch.setattr(api_client, "_export_once", fake_once)
+    assert api_client.export_invoice_list("t", "mua-mtt", "2026-09-01", "2026-09-30") == b"PK\x03\x04"
+    assert [p["ckey"] for p in sent] == ["k0", "k1"]
+
+
+def test_sco_wrong_captcha_gives_up_after_limit(monkeypatch, sco_caps):
+    def always_wrong(token, ep, params, timeout=60):
+        raise RuntimeError("API GDT trả lỗi 400: captcha sai")
+    monkeypatch.setattr(api_client, "_do_get", always_wrong)
+    with pytest.raises(RuntimeError):
+        api_client.fetch_invoices_subtype("t", "mua-mtt", "2026-09-01", "2026-09-30")
+    assert len(sco_caps) == 5

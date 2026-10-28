@@ -116,18 +116,24 @@ def test_split_range_caps_at_30_days():
 
 
 def test_each_chunk_lists_then_downloads_xml(monkeypatch, wired):
-    _run(monkeypatch, _Store([CO]), "--from", "2026-01-01", "--to", "2026-03-31")
+    _run(monkeypatch, _Store([CO]), "--from", "2026-06-01", "--to", "2026-08-29")
     assert len(wired["windows"]) == 3                                                # 90 ngày → 3 đoạn
     assert wired["order"] == ["list", "xml"] * 3                                     # xen kẽ, không dồn danh sách
 
 
+def test_february_split_so_no_chunk_exceeds_one_month(monkeypatch, wired):
+    _run(monkeypatch, _Store([CO]), "--from", "2026-01-01", "--to", "2026-03-31")
+    assert (date(2026, 1, 31), date(2026, 3, 1)) not in wired["windows"]           # GDT trả 400 cho đoạn này
+    assert wired["windows"][1] == (date(2026, 1, 31), date(2026, 2, 27))
+
+
 def test_failed_chunk_does_not_stop_later_chunks(monkeypatch, wired):
-    wired["fail"] = (date(2026, 1, 31), date(2026, 3, 1))
+    wired["fail"] = (date(2026, 7, 1), date(2026, 7, 30))
     store = _Store([CO])
-    assert _run(monkeypatch, store, "--from", "2026-01-01", "--to", "2026-03-31") == 1
+    assert _run(monkeypatch, store, "--from", "2026-06-01", "--to", "2026-08-29") == 1
     assert len(wired["windows"]) == 3                                                # đoạn sau vẫn chạy
     cmd, status, stats = store.runs[0]
-    assert status == "partial" and stats["stats"]["failed_chunks"] == ["2026-01-31→2026-03-01"]
+    assert status == "partial" and stats["stats"]["failed_chunks"] == ["2026-07-01→2026-07-30"]
 
 
 def test_xml_limit_spans_all_chunks(monkeypatch, wired):

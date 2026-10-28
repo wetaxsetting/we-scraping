@@ -59,7 +59,12 @@ class EasyInvoiceAdapter(PdfAdapter):
     def invoice_from_link(self, url: str, code, mail_text: str):
         """
         Mail EasyInvoice: http://<MST>hd.easyinvoice.vn/Invoice/DownloadInvPdf?token=<base64>,
-        token = "<mẫu><ký hiệu>__<số>|<Fkey>" (vd 1C26TAL__37|RZAPJM7MQ). Chỉ giải mã chuỗi, không mở link.
+        token = "<mẫu><ký hiệu>__<số>|<Fkey>". Fkey có 2 kiểu:
+          * cổng chung/nhiều người bán: thuần chữ-số, vd 1C26TAL__37|RZAPJM7MQ
+          * một số cổng riêng (vd 8404421833-001, 8530810438-002): Fkey chứa dấu '-',
+            vd 2C24MAA__342|M2-24-DA8RU-17161791187  → phải cho phép '-' trong Fkey, nếu
+            không regex cũ cắt mất đuôi (chỉ lấy "M2") và tra cứu sai.
+        Chỉ giải mã chuỗi, không mở link.
         """
         from urllib.parse import urlsplit
         token = link_params(url).get("token")
@@ -71,7 +76,7 @@ class EasyInvoiceAdapter(PdfAdapter):
             raw = base64.b64decode(token + "=" * (-len(token) % 4)).decode("utf-8", "replace")
         except (ValueError, TypeError):
             return None
-        m = re.match(r"(\d)([A-Z0-9]{6})__(\d+)\|([A-Za-z0-9]+)", raw)
+        m = re.match(r"(\d)([A-Z0-9]{6})__(\d+)\|([A-Za-z0-9][A-Za-z0-9\-]*)", raw)
         if not m:
             return None
         nbmst = m_host.group(1) + (f"-{m_host.group(2)}" if m_host.group(2) else "")

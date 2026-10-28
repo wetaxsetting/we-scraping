@@ -78,15 +78,24 @@ class CircuitBreaker:
 # ---------------------------------------------------------------------------
 
 LOOKBACK_DAYS = 30   # luôn quét lại 30 ngày gần nhất (HĐ lên GDT muộn)
-MAX_SPAN_DAYS = 30   # GDT giới hạn mỗi lần tìm ≤ 30 ngày
+MAX_SPAN_DAYS = 30   # GDT giới hạn mỗi lần tìm ≤ 30 ngày VÀ ≤ 1 tháng lịch (xem chunk_range)
+
+
+def _month_limit(s: date) -> date:
+    """Ngày cuối cùng còn "≤ 1 tháng" tính từ s: cùng ngày tháng sau (kẹp về cuối tháng) trừ 1 ngày.
+    GDT đo theo tháng lịch: 31/01 → 01/03 chỉ 30 ngày nhưng bị trả 400 "Khoảng thời gian tìm kiếm
+    không được lớn hơn 1 tháng" (main_auto 26/10/2026)."""
+    y, m = (s.year + 1, 1) if s.month == 12 else (s.year, s.month + 1)
+    last_day = ((date(y, m, 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)).day
+    return date(y, m, min(s.day, last_day)) - timedelta(days=1)
 
 
 def chunk_range(start: date, end: date, span_days: int = MAX_SPAN_DAYS) -> list:
-    """[start, end] → các đoạn liên tiếp, mỗi đoạn ≤ span_days ngày (tính cả 2 đầu)."""
+    """[start, end] → các đoạn liên tiếp, mỗi đoạn ≤ span_days ngày (tính cả 2 đầu) và ≤ 1 tháng lịch."""
     out = []
     s = start
     while s <= end:
-        e = min(s + timedelta(days=span_days - 1), end)
+        e = min(s + timedelta(days=span_days - 1), _month_limit(s), end)
         out.append((s, e))
         s = e + timedelta(days=1)
     return out
