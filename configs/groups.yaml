@@ -219,7 +219,7 @@ groups:
   sizes:
   - - 250
     - 40
-  charset: 345689ABCDEHJKMNPRSTUVWXY
+  charset: 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ
   charset_mode: fixed
   min_freq: 0.005
   review: true
@@ -228,7 +228,7 @@ groups:
   in_channels: 1
   clahe: false
   clip_above: null
-  note: "(250, 40) len 5-10. 30/10: 106.772 anh, TOAN BO do BotDetect sinh (van tay sRGB,gAMA,pHYs), khong con anh that cua site. Bang chu that 25 ky tu (data khong co 0 1 2 7 F G I L O Q Z) -> sua tu 36 ve 25; checkpoint cu (36 ky tu) khong nap duoc nua, phai train lai. ~17.800 mau/ky tu: train tren Colab hoac lay mau con 10-20k anh. So test chi do tren anh sinh, can captcha that VDSG de do"
+  note: "(250, 40) len 5-10. 30/10: 106.772 anh, TOAN BO do BotDetect sinh (van tay sRGB,gAMA,pHYs), khong con anh that cua site. Data chi co 25 ky tu (khong co 0 1 2 7 F G I L O Q Z) nhung GIU charset 36: checkpoint 29/10 (6 epoch ~52 gio, val_em 93,18%) train voi 36 ky tu, doi ve 25 thi khong nap duoc ma 11 lop thua vo hai (khong bao gio co trong nhan). So val chi do tren anh sinh, can captcha that VDSG de do"
 - group_id: g_150x39
   sizes:
   - - 150
