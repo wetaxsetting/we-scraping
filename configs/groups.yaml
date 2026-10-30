@@ -219,7 +219,7 @@ groups:
   sizes:
   - - 250
     - 40
-  charset: 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ
+  charset: 345689ABCDEHJKMNPRSTUVWXY
   charset_mode: fixed
   min_freq: 0.005
   review: true
@@ -228,7 +228,7 @@ groups:
   in_channels: 1
   clahe: false
   clip_above: null
-  note: (250, 40) n=1000 len 5-10 drop 17.4% ring_raw 219
+  note: "(250, 40) len 5-10. 30/10: 106.772 anh, TOAN BO do BotDetect sinh (van tay sRGB,gAMA,pHYs), khong con anh that cua site. Bang chu that 25 ky tu (data khong co 0 1 2 7 F G I L O Q Z) -> sua tu 36 ve 25; checkpoint cu (36 ky tu) khong nap duoc nua, phai train lai. ~17.800 mau/ky tu: train tren Colab hoac lay mau con 10-20k anh. So test chi do tren anh sinh, can captcha that VDSG de do"
 - group_id: g_150x39
   sizes:
   - - 150
@@ -326,7 +326,7 @@ groups:
   sizes:
   - - 70
     - 23
-  charset: ABCDEFGHJKLMNOPQRSTUVWXYZ
+  charset: ABCDEFGHIJKLMNOPQRSTUVWXYZ
   charset_mode: core
   min_freq: 0.005
   review: false
@@ -335,4 +335,4 @@ groups:
   in_channels: 1
   clahe: false
   clip_above: null
-  note: (70, 23) n=1539 len 4-4 drop 4.5% ring_raw 255 [tu env/g_70x23]
+  note: "(70, 23) len 4, 26 chu HOA (co I: 450 lan, thay ro trong anh). 29/10: 3.000 anh, ~460 mau/ky tu, khong trung anh. Soi 24 anh: 3 nhan sai ro (HEDH->HEAD, FVYQ->FVYO, DZUB->DZUR) + vai cap O/Q, C/G kho"
