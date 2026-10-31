@@ -133,3 +133,95 @@ def test_invoice_from_link():
 def test_declares():
     a = asiainvoice.AsiaInvoiceAdapter()
     assert a.source_id == "asiainvoice" and a.mst_tcgp == ("0101162173",) and a.hosts == ("asiainvoice.vn",)
+
+
+def test_captcha_from_table_skips_ocr(monkeypatch):
+    """Ảnh nằm trong kho captcha cố định → trả nhãn trong bảng, không gọi ddddocr."""
+    import io
+    import numpy as np
+    from PIL import Image
+    z = np.load(asiainvoice.TABLE_PATH)
+    img, label = z["images"][0], str(z["labels"][0])
+    buf = io.BytesIO()
+    Image.fromarray(img).convert("RGB").save(buf, format="JPEG", quality=95)   # cổng trả JPEG
+    monkeypatch.setattr(asiainvoice, "ocr_text", lambda b: pytest.fail("không được gọi OCR"))
+    assert asiainvoice.AsiaInvoiceAdapter._captcha(buf.getvalue()) == label
+
+
+def test_captcha_outside_table_falls_back_to_ocr(monkeypatch):
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (150, 30), "white").save(buf, format="PNG")
+    monkeypatch.setattr(asiainvoice, "ocr_text", lambda b: "ab1cd")
+    assert asiainvoice.AsiaInvoiceAdapter._captcha(buf.getvalue()) == "AB1CD"
+
+
+# ---------------------------------------------------------------- bảng tự học
+@pytest.fixture
+def learn_tmp(monkeypatch, tmp_path):
+    monkeypatch.setenv("INVOICE_OUTPUT_DIR", str(tmp_path))
+    asiainvoice._STATE.clear()
+    yield tmp_path / "captcha_learned" / "asiainvoice"
+    asiainvoice._STATE.clear()
+
+
+def _jpeg(seed: int) -> bytes:
+    """Ảnh 150x30 không có trong bảng gốc."""
+    import io
+    import numpy as np
+    from PIL import Image
+    a = np.random.default_rng(seed).integers(0, 255, (30, 150), dtype=np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(a).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _setup_img(monkeypatch, img):
+    real = asiainvoice.request
+
+    def fake(session, method, url, **kw):
+        r = real(session, method, url, **kw)
+        if url == BASE + "/tra-cuu/GetCaptcha":
+            r.content = img
+        return r
+    monkeypatch.setattr(asiainvoice, "request", fake)
+
+
+def test_learns_ocr_answer_accepted_by_server(monkeypatch, learn_tmp):
+    img = _jpeg(1)
+    _setup(monkeypatch, [], [1], ocr=["kq7mz"])               # error 1 = captcha đúng, HĐ không có
+    _setup_img(monkeypatch, img)
+    with pytest.raises(PdfFetchError):
+        asiainvoice.AsiaInvoiceAdapter().fetch_pdf(dict(INV))
+    files = list(learn_tmp.glob("*.png"))
+    assert [f.stem.split("_", 1)[1] for f in files] == ["KQ7MZ"]
+    asiainvoice._STATE.clear()                                # tiến trình mới đọc lại từ đĩa
+    monkeypatch.setattr(asiainvoice, "ocr_text", lambda b: pytest.fail("không được gọi OCR"))
+    assert asiainvoice.table_answer(img) == "KQ7MZ"
+
+
+def test_does_not_learn_rejected_ocr_answer(monkeypatch, learn_tmp):
+    _setup(monkeypatch, [], [3, "ok"], ocr=["wrong", "right"])
+    _setup_img(monkeypatch, _jpeg(2))
+    asiainvoice.AsiaInvoiceAdapter().fetch_pdf(dict(INV))
+    assert [f.stem.split("_", 1)[1] for f in learn_tmp.glob("*.png")] == ["RIGHT"]
+
+
+def test_rejected_table_answer_falls_back_and_relearns(monkeypatch, learn_tmp):
+    import io
+    import numpy as np
+    from PIL import Image
+    z = np.load(asiainvoice.TABLE_PATH)
+    buf = io.BytesIO()
+    Image.fromarray(z["images"][5]).save(buf, format="PNG")
+    img, table_label = buf.getvalue(), str(z["labels"][5])
+    _setup(monkeypatch, [], [3, "ok"], ocr=["fixed"])         # bảng trả sai → ddddocr đọc lại đúng
+    _setup_img(monkeypatch, img)
+    calls = []
+    real = asiainvoice.request
+    monkeypatch.setattr(asiainvoice, "request",
+                        lambda s, m, u, **kw: (calls.append(kw.get("data")), real(s, m, u, **kw))[1])
+    asiainvoice.AsiaInvoiceAdapter().fetch_pdf(dict(INV))
+    assert [d["Captcha"] for d in calls if d] == [table_label, "FIXED"]
+    assert asiainvoice.table_answer(img) == "FIXED"           # phần học thêm thắng bảng gốc
