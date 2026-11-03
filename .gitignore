@@ -71,6 +71,18 @@ runs/*/*
 !runs/g_180x50_vn/
 # g_160x75 (hoadon30s / P.A Việt Nam): train 02–03/11, test 86,16%; adapter pavietnam chưa dùng
 !runs/g_160x75/
+# 03/11: đưa lên theo yêu cầu user (kể cả nhóm chưa dùng trong job)
+!runs/g_250x40/
+!runs/g_70x23/
+!runs/g_200x80/
+!runs/g_180x64/
+!runs/g_180x50_tax24/
+!runs/g_160x60/
+!runs/g_150x39/
+!runs/g_150x30/
+!runs/g_120x40_vnpt/
+!runs/g_120x40/
+!runs/g_100x36/
 
 # WeInvoice UI Spec v1.0 (PO bàn giao 30/10): giữ bản bàn giao (00/01/02, bat, 2 zip) + weinvoice-web/
 # (mã nguồn UI để đọc/grep, trùng nội dung WeInvoice_UI_Source_v1.0.zip). Bỏ các bản giải nén tay khác
