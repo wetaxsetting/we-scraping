@@ -6,6 +6,9 @@ Project gồm 2 phần, mô tả riêng bên dưới:
 - **PHẦN 2 – Xử lý hóa đơn (XML → PDF):** đăng nhập hoadondientu.gdt.gov.vn bằng model captcha
   → tải XML → parse theo QĐ 1233 → lưu PostgreSQL → lấy PDF bản gốc (site tra cứu NCC / mail).
 
+PHẦN 3 (cuối file) là đặc tả sản phẩm **WeInvoice** của PO (UI Spec v1.0): sản phẩm dùng dữ liệu của PHẦN 2,
+P1 demo 23/12/2026.
+
 ## Chung
 
 - Môi trường: Windows, PowerShell 5.1, Python 3.13, CPU-only, RAM ít.
@@ -17,7 +20,7 @@ Project gồm 2 phần, mô tả riêng bên dưới:
   tự chạy lại khi user chưa yêu cầu.
 - Repo GitHub (`wetaxsetting/we-scraping`) không chứa `env/`, `env_pass/`, `output/`, `.env`, `example/`.
   `runs/` chỉ đưa `best.pt` (Git LFS) + `history.csv` của nhóm đang dùng thật: `g_600x120`, `g_150x34`,
-  `g_80x30`, `g_1500x350`, `g_300x75`, `g_200x70`, và từ 27/10 `g_120x38`, `g_194x35`, `g_120x40_cloud`. Adapter mới dùng nhóm khác → thêm `!runs/<nhóm>/` vào `.gitignore`.
+  `g_80x30`, `g_1500x350`, `g_300x75`, `g_200x70`, và từ 27/10 `g_120x38`, `g_194x35`, `g_120x40_cloud`, từ 02/11 `g_180x50_vn`. Adapter mới dùng nhóm khác → thêm `!runs/<nhóm>/` vào `.gitignore`.
   Máy mới: cài Git LFS trước khi clone, nếu không `best.pt` chỉ là file trỏ vài trăm byte và không nạp được.
 - Báo cáo tuần: `report/Bao-cao-tuan-<tuần>-<năm>.docx` + bản tiếng Anh `report/Weekly-report-W<tuần>-<năm>.docx`
   (cùng nội dung, sửa bản nào thì sửa cả hai). Số liệu lấy từ `invoice_job.py status`,
@@ -122,7 +125,7 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
   `g_200x70` ~43,2 giờ (113 epoch), `g_180x50_vn` ~24,5 giờ (52 epoch), `g_180x50_tax24` ~3 giờ
   (53 epoch, 1.000 ảnh); `g_160x60` ~38 giờ, `g_120x40_vnpt` bản 14/10 ~30 giờ; bản 29–30/10 (máy khác):
   `g_180x50_vn` ~50,7 giờ (92 epoch), `g_250x40` ~52,8 giờ chỉ 6 epoch (106.772 ảnh), `g_70x23` ~12,1 giờ,
-  `g_200x80` ~9,5 giờ (100 epoch). Nhóm lớn nên train
+  `g_200x80` ~9,5 giờ (100 epoch), `g_150x39` bản 31/10 ~67,8 giờ (120 epoch, 12.873 ảnh). Nhóm lớn nên train
   trên GPU/Colab. Train xong mang sang: chép **đúng 2 file** `runs/<nhóm>/best.pt` + `history.csv`,
   rồi chạy `evaluate --split test` để xác nhận. **`env/<nhóm>` ở máy này phải y hệt data lúc train**,
   vì `core` suy charset từ data — thêm/bớt ảnh xong là charset đổi và checkpoint hết nạp được.
@@ -140,7 +143,7 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
 | `g_600x120`                                   | Đăng nhập GDT                                                                                              | 89,0%  | **Đang dùng thật.** Train lại 16–17/10 với 13.757 ảnh (cũ 1.784): test 87,30% (1.370 ảnh), char 97,79%. Nhầm chính `X↔K`, `Y→K`, `P↔R`                                                                                                                                                                                                                                                                                       |
 | `g_180x50_tax24`                              | VN-Invoice, TAX24…                                                                                         | 100%   | **Train 15/10, tốt nhất hiện có**: test 98,99% (99 ảnh), char 99,80%. n=1.000. Đổi tên từ `g_180x50_lower`                                                                                                                                                                                                                                                                                                                   |
 | `g_200x70`                                    | Thái Sơn (einvoice.vn)                                                                                     | 89,2%  | **Học được sau khi sửa nhãn** (upper hết + bỏ nhãn có chữ số): test 89,24% (1.125 ảnh), char 97,24%. n=11.311. Lỗi còn lại chủ yếu là sai độ dài (`4→3`). **20/10 đang train lại với height 48** (sửa lỗi CTC nuốt ký tự lặp `LWWD→LWD`, xem note trong groups.yaml); bản height 32 (89,24%, meta đã vá) giữ ở `runs/g_200x70/h32_89pct/` — không nạp được với config hiện tại; `best.pt` ngoài cùng là lượt h48 mới 1 epoch |
-| `g_180x50_vn`                                 | vninvoice.vn (`tracuu.v50.vninvoice.vn`; VN-Invoice MST 0101352495 / "VNISC" dòng 46 Excel MST 0103018807) | 91,4%  | **Train lại 29/10 trên nhãn đã sửa case** (máy khác, 92 epoch ~50,7 giờ, bảng chữ 56): test **90,63%** (1.163 ảnh), char 98,41%. Lỗi chính giờ là **sai độ dài `6→5` (86/109 lỗi, nuốt ký tự lặp `kkDPY2→kDpY2`)**, nhầm case còn lẻ tẻ (`P→p`, `j→J`). **Chưa đo trên captcha thật** — bản 16/10 test 62% mà thật 0/8, nên phải đo trên site trước khi dùng. Chưa có adapter, chưa có HĐ thật (kiểm DB 20/10) |
+| `g_180x50_vn`                                 | vninvoice.vn (`tracuu.v50.vninvoice.vn`; VN-Invoice MST 0101352495 / "VNISC" dòng 46 Excel MST 0103018807) | 91,4%  | **Train lại 29/10 trên nhãn đã sửa case** (máy khác, 92 epoch ~50,7 giờ, bảng chữ 56): test **90,63%** (1.163 ảnh), char 98,41%. Lỗi chính giờ là **sai độ dài `6→5` (86/109 lỗi, nuốt ký tự lặp `kkDPY2→kDpY2`)**, nhầm case còn lẻ tẻ (`P→p`, `j→J`). **Đo trên site 02/11: server nhận 28/30 (93%)**, 2 lần trượt đều là đọc ra 5 ký tự (nuốt ký tự lặp); 28/28 lần đọc đủ 6 ký tự đều đúng → adapter chỉ cần bỏ đáp án ≠ 6 ký tự và xin ảnh mới. Cách đo: `GET .../PortalApiService/captcha` → `POST .../portal-public` với mã bịa, server kiểm captcha trước (sai → "Mã xác thực không đúng", đúng → "Từ ngày không được để trống"). **Đang dùng** trong adapter `vninvoice` (02/11): 15/15 HĐ thật lấy được PDF + XML |
 | `g_120x40_vnpt`                               | VNPT cổng HST chung (captcha API `get-captcha?width=120&height=40`)                                        | 98,3%  | **Train lại 14/10, dùng được**: test 98,59% (1.206 ảnh), char 99,32%; captcha thật 6/6. Chưa adapter nào cần (HST không kiểm captcha phía server)                                                                                                                                                                                                                                                                            |
 | `g_120x38`                                    | Megabiz (vinvoice)                                                                                         | 100%   | OK                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `g_160x60`                                    | WEBCASH (wetax)                                                                                            | 99,75% | OK (server nhận 6/6)                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -151,12 +154,12 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
 | `g_120x40_cloud`                              | Cloudteam                                                                                                  | 94,7%  | OK                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `g_194x35`                                    | PVOIL                                                                                                      | 91,8%  | OK                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `g_180x64`                                    | —                                                                                                          | 75,2%  | Cần thêm dữ liệu                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `g_150x39`                                    | SmartSign (adapter đang dùng ddddocr, xem 2.6)                                                             | 2,3%   | **26/10 sửa nhãn tay + bảng chữ 33 ký tự, chờ train lại** (2,3% là bản cũ, nhãn sai). Xem 1.5 mục 7                                                                                                                                                                                                                                                                                                      |
+| `g_150x39`                                    | SmartSign (adapter đang dùng ddddocr, xem 2.6)                                                             | 81,0%  | **Train lại 31/10** trên nhãn sửa tay 26/10 (120 epoch ~67,8 giờ, bảng chữ 33): test **81,36%** (1.277 ảnh), char 94,59%. Lỗi chính `4→3` (76 ảnh, nuốt ký tự lặp `uu5u→u`, `77pe→7e`), `m→n`, `l→i`. **Thấp hơn ddddocr (server nhận 54/60 = 90%) → adapter giữ ddddocr.** Còn ~11.200 nhãn 4 ký tự chưa soi. Xem 1.5 mục 7 |
 | `g_250x40`                                    | VDSG                                                                                                       | 93,2%  | **Train 30/10** (máy khác, chỉ 6 epoch nhưng ~52,8 giờ, 106.772 ảnh **BotDetect sinh**): test **93,32%** (10.677 ảnh), char 98,96%. Chưa đo trên captcha thật của site; cổng VDSG phải đăng nhập. Thư viện BotDetect **không giải được captcha**, xem 1.3 |
 | `g_70x23`                                     | Bitware                                                                                                    | 84,7%  | **Train 30/10** (100 epoch ~12,1 giờ, 3.000 ảnh, bảng chữ 26 chữ HOA): test **83,67%** (300 ảnh), char 95,42%. Lỗi chính `4→3` (nuốt ký tự lặp `ZZRH→ZH`, `UUKO→UKQ`), `I→J`. Chưa có HĐ thật |
-| `g_200x80`                                    | Ngô Gia Phát                                                                                               | 15,2%  | **Train 29/10** (100 epoch ~9,5 giờ, 2.625 ảnh, bảng chữ 30): test **74,05%** (262 ảnh), char 92,75%, nhưng val_em tốt nhất chỉ 15,2% — **lệch bất thường, chưa rõ nguyên nhân, kiểm lại trước khi dùng**. Lỗi chính `5→4`. Chưa có HĐ thật |
+| `g_200x80`                                    | Ngô Gia Phát                                                                                               | 15,2%  | **Train 29/10** (100 epoch ~9,5 giờ, 2.625 ảnh, bảng chữ 30): test **74,05%** (262 ảnh), char 92,75%, nhưng val_em tốt nhất chỉ 15,2% — **lệch bất thường, chưa rõ nguyên nhân, kiểm lại trước khi dùng**. Đo lại 31/10 trên máy này: val 70,99% (val_loss lúc train 5,4 vs train_loss 1,3 = overfit), cùng 2.625 ảnh, không file nào đổi sau 28/10 → nghi chia tập ở đây khác lúc train, val/test lẫn ảnh train; số thật có thể ~15%. Phải đo trên captcha thật hoặc train lại trên máy này. Lỗi chính `5→4`. Chưa có HĐ thật |
 | `g_150x30`                                    | ASIA (asiainvoice.vn)                                                                                      | —      | **Không train — tra bảng** (29/10). Cổng phát lại từ 1 **kho captcha cố định**: 7.561 file trong env chỉ là 823 ảnh khác nhau (trung bình mỗi ảnh lưu ~9 lần). Đã dọn: giữ 818 ảnh (bản sao → `env/g_150x30_dups/`, 5 ảnh không đọc chắc → `env/g_150x30_review/`, nhật ký `env/g_150x30/dedup_20261029.csv`), sửa tay 31 ảnh có nhãn mâu thuẫn. 818 ảnh ≈ 157 mẫu/ký tự, dưới ngưỡng train, nên dùng bảng `pdf_providers/data/asia_captcha.npz` (`scripts/build_asia_captcha_table.py`). Cổng thật 29/10: 55/60 captcha có trong bảng, bảng trả lời đúng 35/36 lần gửi |
-| `g_160x75`                                    | hoadon30s                                                                                                  | 0%     | Chưa từng học được |
+| `g_160x75`                                    | hoadon30s (P.A Việt Nam, `tracuu.hoadon30s.vn/load-capcha`)                                                | 89,4%  | **Train 02–03/11 bằng `train_aug`** (máy khác, 100 epoch ~12 giờ, 5.495 ảnh, bảng chữ 30; bản cũ 1.995 ảnh val_em 0%): test **86,16%** (549 ảnh), char 96,90%, train_em 92,6% (không học thuộc). Lỗi chính sai độ dài `5→4` (40 ảnh, nuốt ký tự lặp `ww3yt→w3t`) → adapter bỏ đáp án ≠ 5 ký tự. Chưa đo trên captcha thật; adapter `pavietnam` đang tra ở cổng khác (hoadon.pavietnam.vn, ddddocr 40/40) nên chưa cần |
 
 ## 1.5 Kế hoạch train (theo ưu tiên)
 
@@ -251,7 +254,8 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
    khi thu thập mẫu train nhóm riêng (PHẦN 2, mục 2.6).
 5. `g_100x30` mới (FAST, einvoice.fast.com.vn): 5 ký tự hoa/thường lẫn lộn, cần nhiều mẫu.
 6. Các nhóm < 25%: làm khi phát sinh hóa đơn thật từ NCC đó.
-7. `g_150x39` (SmartSign, captcha 3–4 ký tự, sọc chéo đỏ). **Sửa nhãn tay 26/10, chờ train lại.**
+7. `g_150x39` (SmartSign, captcha 3–4 ký tự, sọc chéo đỏ). **Sửa nhãn tay 26/10, train lại 31/10: test 81,36%
+   — vẫn thua ddddocr (90%), chưa đổi adapter** (xem 1.4). Muốn hơn: soi ~11.200 nhãn 4 ký tự + sửa lỗi nuốt ký tự lặp.
    Nhãn cũ do ddddocr đọc trên **ảnh thô còn sọc đỏ** nên hay **sót nét mảnh `l 1 j i`** ở đầu/cuối chuỗi
    (`lx51→x5`, `j1j1→j1`, `cctl→cc`): soi 20 ảnh nhãn 2 ký tự thì 18 ảnh sai. Đọc lại bằng bộ lọc sọc của
    adapter (`smartsign.clean_captcha`) ở 4 ngưỡng, chỉ nhận khi cả 4 khớp: đúng ~77%, phần sai vẫn là sót
@@ -489,6 +493,7 @@ Các adapter dưới đây đã thử thật trên XML thật (10/2026):
 
 | `mobifone`       | MobiFone (tracuuhoadonvienthong. / tracuuhoadon.mobifone.vn; cổng chung tracuuhoadon.mobifoneinvoice.vn) | 0100686209 (+ -002) | "số bảo mật" **chỉ có trong mail** (`sobaomat=`) → `POST /Tracuu2/GetInfoInvoice` → `PrintInvoice` (PDF) + `ExportZipFileXML` | không. Thật 10/10 (27/10, link mail). XML Thuế không có mã → HĐ chỉ có XML vẫn `no_code` |
 | `kiotviet`       | KiotViet (api.einvoice.kiotviet.vn) | 0104359717 | `mtc` từ link mail `?shd=&mtc=` (HĐ MTT không có mã trong XML) | không. Thật 1/1 PDF + XML (27/10) |
+| `vninvoice`      | VN-Invoice (tracuu.v50.vninvoice.vn; API gateway.v50.vninvoice.vn) | 0101352495, 0103018807 | TTKhac "Mã bảo mật" (FamilyMart 20 ký tự, Phong Vũ 7 số; PDF in là "Mã tra cứu"/"Số bảo mật") + MST bán + ngày lập → `POST portal-public` → `download/public/unofficial` (PDF base64 ở `fileBytes`) / `download/public/xml` | `g_180x50_vn` (6 ký tự, phân biệt hoa/thường; đáp án ≠ 6 ký tự → xin ảnh mới). Cổng trả **HTTP 500** cho captcha sai ("Mã xác thực không đúng") nên adapter tự gọi HTTP, không qua `common.request`. Thật **15/15 PDF + XML** (02/11, ~3 s/HĐ) |
 
 **Adapter thêm 27/10 cho NCC trong `docs/Danh_sach_NCC.xlsx` — CHƯA có HĐ thật** (DB không có HĐ/link nào của các MSTTCGP
 này): mỗi cổng chỉ mới kiểm phản hồi "không tìm thấy" (và captcha sai/đúng) bằng mã bịa; nhánh tải PDF suy từ JS/HTML của
@@ -715,3 +720,119 @@ mail trong khoảng đó mất luôn — tăng `INVOICE_MAIL_DAYS` nếu dự ki
 - Test DB (`tests/test_invoice_store.py`) chưa chạy trên DB thật.
 
 <!-- Bổ sung thêm bên dưới -->
+
+---
+
+# PHẦN 3 – WEINVOICE (UI SPEC v1.0)
+
+Đặc tả sản phẩm **WeInvoice** do PO WeCMS bàn giao 30/10/2026 (file Roadmap 02/11/2026). PHẦN 2 là nguồn dữ liệu
+(engine + nghiên cứu P0) cho sản phẩm này. **Giao diện + quy tắc nghiệp vụ (file 02) là bắt buộc; kiến trúc, CSDL,
+API, engine do Dev tự quyết.** Thấy vô lý / không khả thi → phản hồi PO, PO ra bản spec mới (v1.1…).
+Chỉ sửa bộ spec khi user yêu cầu, và ghi lại ở mục "Đã sửa" bên dưới (2 file zip giữ nguyên bản gốc v1.0).
+
+**Đã sửa so với bản v1.0 (02/11/2026, theo user):**
+- Danh mục NCC 138 → **144** (`weinvoice-web/lib/providers.ts` stt 139–144, `02` mục 3.4): THACO 3600252847,
+  VETC thu phí 0107500414, FPT Retail 0311609355, Genuwin 0304248595, Paris Baguette 0310634327 (phần mềm Genuwin),
+  Thế Giới Di Động 0306731335 (tên pháp nhân + trang tra cứu còn phải xác nhận).
+- Tiền tệ: `Invoice.currency` từ `"VND" | "USD"` thành mã ISO 4217 bất kỳ theo `DVTTe` (`VNĐ` → `VND`); `02` mục 3.3.
+- Thuế suất **KKKNT**: `vatRate = -2` (KCT vẫn `-1`), hàm `vatRateLabel` trong `lib/types.ts` dùng chung cho
+  `InvoiceSheet`, `lib/xml.ts`, `lib/api/checks.ts`; nhãn `risk.rate_note` VI/EN/KO; `02` mục 3.3 và 3.7.
+  Chưa chạy `tsc` (máy không có `node_modules`).
+- File Roadmap: VNISC **0103018807 → 0102331762** ở cả 7 ô (sheet NCC theo Phase, Roadmap-WBS-Function, P0-Nghien cuu).
+  0102331762 (invoice.abcsys.vn) mới là NCC đã xong 2 kênh.
+
+## 3.1 Bộ tài liệu
+
+| File (`docs/`)                                      | Nội dung                                                                                                                                                                                      |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WeInvoice_UI_Spec_v1.0/00_DOC_TRUOC.md`            | Đọc trước: phải theo gì / Dev tự quyết gì, cách chạy prototype                                                                                                                                |
+| `WeInvoice_UI_Spec_v1.0/02_Yeu_cau_nghiep_vu.md`    | Phạm vi P1 + quy tắc nghiệp vụ bắt buộc (mục 3.1–3.10 của file đó)                                                                                                                            |
+| `WeInvoice_UI_Spec_v1.0/01_Dac_ta_UI.html`          | 19 màn hình: mục đích, thành phần, thao tác + 38 ảnh. Nặng 3,6 MB vì ảnh base64 → mở bằng trình duyệt; muốn đọc chữ thì lọc bỏ `data:` trước, **đừng Read cả file**                          |
+| `WeInvoice_UI_Spec_v1.0/weinvoice-web/`             | Mã nguồn UI (Next.js 16, React 19, Tailwind 4), logic đã gỡ thành stub `TODO(dev)`. `lib/types.ts` = dữ liệu UI cần, `lib/providers.ts` › `PROVIDERS` = danh mục 144 NCC, `lib/i18n` = nhãn VI/EN/KO. Bản đã sửa (xem trên), khác zip |
+| `WeInvoice_UI_Spec_v1.0/chay_prototype.bat` + 2 zip | Prototype chạy không cần cài (`demo`/`demo1234`, cổng 3001), dữ liệu bên trong là mô phỏng. Bat giải nén vào `WeInvoice_Prototype/` và ghi `data/state.json`                                 |
+| `WeInvoice_Roadmap_WBS_Function_v1.0.xlsx`          | Roadmap P0–P7, WBS/Gantt, Function List 117 chức năng (66 thuộc P1), sheet "NCC theo Phase" (P1 = 27 NCC)                                                                                     |
+
+Git chỉ nhận bản bàn giao + `weinvoice-web/`. `.gitignore` bỏ 2 bản giải nén tay (`WeInvoice_Prototype_v1.0/`,
+`WeInvoice_UI_Source_v1.0/`, trùng 100% zip), thư mục bat sinh ra và mọi file trong `TestData/` (dev hay bỏ XML/PDF
+thật vào để thử prototype; dữ liệu thật không lên repo).
+
+**P1: dev 02/11 → demo 23/12/2026**, Webcash + 27 NCC đã xong cả 2 kênh (XML + email). Màn "lộ trình" (kê khai GTGT,
+bảng kê, xuất theo mẫu, phụ lục giảm thuế, nối PDF, gói) chỉ cần trang giới thiệu. Theo Function List, kiểm tra HĐ,
+rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API cho nút "Update" của WeCMS (thay Coocon) là P1 Must.
+
+## 3.2 Ánh xạ spec ↔ DB
+
+| Spec (`lib/types.ts`, file 02)                                                    | DB hiện tại                                                                                         | Ghi chú                                                                                                                       |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Khoá loại trùng: MST bán + mẫu + ký hiệu + số (bỏ số 0 đầu)                       | `UNIQUE (company_mst, nbmst, khmshdon, khhdon, shdon)`                                              | `shdon` BIGINT nên số 0 đầu đã mất. Thêm `company_mst`: HĐ giữa 2 MST cùng quản lý thành 2 dòng, hợp với việc lọc theo MST làm việc |
+| `direction` purchase / sales                                                      | `direction` mua / ban                                                                               |                                                                                                                               |
+| `status` gốc / thay thế / bị thay thế / điều chỉnh / bị điều chỉnh / đã huỷ       | `tthai` 1 / 2 / 4 / 3 / 5 / 6                                                                       |                                                                                                                               |
+| `relatedId` (thay thế ↔ bị thay thế)                                              | `parsed.thong_tin_chung.hoa_don_lien_quan` (XML), `list_raw.khhdgoc/shdgoc` (API JSON)              | Không có cột, phải nối lúc đọc                                                                                                |
+| `cqtCode`                                                                         | `parsed.ma_cqt`, `list_raw.mhdon`                                                                   |                                                                                                                               |
+| `provider` + `providerTaxId`                                                      | `invoice_xml.mst_tcgp` (thiếu thì `list_raw.msttcgp`) → tra `PROVIDERS`                             | `einvoice_providers.name` trống cả 42 dòng                                                                                    |
+| `lookupCode` / `lookupUrl`                                                        | `invoice_xml.ma_tra_cuu` / `lookup_url`                                                             | BKAV tra bằng `parsed.dlhdon_id`                                                                                              |
+| `sellerAddress` / `buyerAddress`                                                  | `parsed.nguoi_ban/nguoi_mua.dia_chi`, `list_raw.nbdchi/nmdchi`, `partners.address`                  |                                                                                                                               |
+| `items[].vatRate` (0/5/8/10, −1 = KCT)                                            | `invoice_details.thue_suat` TEXT                                                                    | Có thêm `KKKNT`, `KHAC:x%`                                                                                                    |
+| `files[]`, `origin` gdt / vendor / email / upload                                 | `invoice_xml` (XML từ mail: `invoice_details.nguon='xml_email'`), `invoice_pdf.source_id` (`email`, `email:<adapter>`, `<adapter>`) | Không có tệp đính kèm khác, không có nguồn `upload`                                                       |
+| `GdtConnection`                                                                   | `companies` + `gdt_sessions` + `job_run_companies.status`                                           | Không có nhãn; mật khẩu ở `.env`                                                                                              |
+| `SyncRun`                                                                         | `job_runs` + `job_run_companies.stats` (`new_invoices`, `xml_ok`, `failed_chunks`…)                 | Không có số "cập nhật", không lưu kỳ từ–đến                                                                                   |
+| `EmailMessage`                                                                    | `email_messages` + `email_files`                                                                    | Mail không phải HĐ không lưu tiêu đề / người gửi                                                                              |
+| Tag, người dùng, tài khoản con + quyền, hộp thư theo khách, địa chỉ nhận mail theo MST | —                                                                                              | Chưa có                                                                                                                       |
+
+## 3.3 Dữ liệu thật so với spec (đo 02/11/2026, chỉ đọc DB)
+
+3.516 HĐ của 1 MST (1201496252): mua 2.502, bán 1.014.
+
+- **Đã đáp ứng:** ngày lập, MST/tên bên bán, tên bên mua, tổng tiền 3.516/3.516; hướng HĐ khớp MST 100%; HĐ có mã (C)
+  có XML 2.758/2.758 và mã CQT 2.758/2.758; 45/61 HĐ thay thế/điều chỉnh nối được HĐ gốc trong DB, cả 45 HĐ gốc mang
+  đúng `tthai` 4/5. Khối "Tình trạng dữ liệu" của Tổng quan lúc này: HĐ có mã thiếu XML 0, HĐ không mã chưa có XML 553,
+  HĐ chưa có PDF gốc 1.911.
+- **Thủng theo kỳ:** không có HĐ nào trong 2024-05 → 2024-12 và 2025-02 → 2026-02; bán ra chỉ có 2023-01, 2023-07 → 11,
+  2026-03 → 10. `sync_cursors` chỉ giữ 1 mốc `synced_to` mỗi loại (cả 6 loại đều 02/11/2026) nên **không trả lời được
+  "kỳ nào chưa lấy đủ"** (banner của spec) → cần lưu độ phủ theo (MST, loại, tháng). 903 XML trong mail chưa khớp đều là
+  HĐ mua của công ty, phần lớn 2024 (345) và 2025 (450): spec sẽ "Tạo mới", còn mình để `unmatched` vì HĐ chỉ được tạo
+  từ danh sách GDT.
+- **PDF gốc 1.605/3.516:** mua có MSTTCGP 1.261/1.575 (80%), mua không có MSTTCGP 338/927, **bán ra 6/1.014** (Webcash
+  tự phát hành qua WeTax; adapter `wetax` chỉ chạy qua link mail).
+- **"Phát hành qua":** 2.507 HĐ ra tên NCC trong danh mục 138. 82 HĐ có MSTTCGP ngoài danh mục 138 (đã thêm vào,
+  danh mục nay 144): THACO 3600252847 (58), VETC thu phí 0107500414 (11), FPT Retail 0311609355 (6), Genuwin 0304248595
+  (4), Paris Baguette 0310634327 (2), 0306731335 (1, người bán Thế Giới Di Động). 927 HĐ không có MSTTCGP: 553 HĐ không
+  mã chưa có XML, 323 HĐ MTT (adapter vẫn định tuyến theo host / NCC quen, 319 có PDF), 51 khác.
+- **Trạng thái:** 19 HĐ "Hóa đơn đã bị xóa bỏ/hủy bỏ" lấy từ file Excel có `tthai` NULL vì `invoice_list_excel._TTHAI`
+  chỉ có "hóa đơn đã bị hủy" → mất trạng thái "Đã huỷ" (spec dùng để lọc, hạch toán bỏ qua HĐ huỷ).
+- **Trạng thái không bao giờ cập nhật:** `upsert_invoices` là `ON CONFLICT DO NOTHING` → HĐ đã lưu rồi mới bị thay thế /
+  điều chỉnh / huỷ vẫn giữ trạng thái cũ. Dữ liệu hiện chưa dính, nhưng spec cần (nhãn trạng thái, "HĐ biến động",
+  số "cập nhật" trong lịch sử đồng bộ).
+- **Tiền tệ:** VND 3.357, `VNĐ` 16 (cần chuẩn hoá), trống 129, USD 11, KRW 3 (spec đã sửa nhận mọi mã tiền tệ).
+- **Thuế suất dòng:** 10% 7.768, 8% 5.533, KCT 1.242, 0% 44, 5% 29, KKKNT 13 (spec đã thêm, `vatRate = -2`), trống 104.
+- 28 XML trong mail vẫn `unmatched` dù HĐ đã có XML từ Thuế: file tạm đã mất nên `rematch` bỏ qua (`OSError` →
+  `continue`) thay vì đánh `duplicate`.
+
+## 3.4 Lệch trong file Roadmap
+
+- ~~VNISC 0103018807~~ đã sửa thành 0102331762 (xem "Đã sửa" ở đầu PHẦN 3). 0103018807 tra ở vninvoice.vn, model
+  `g_180x50_vn` chưa dùng được (1.5 mục 3).
+- VETC ghi xong 2 kênh, nhưng 8 HĐ của 0106858609 (phí đỗ xe, chỉ xem trong app) đều chưa có PDF; 11 PDF VETC lấy được
+  là của 0107500414, mà MST này không có trong danh mục.
+- Dữ liệu demo P1 mỏng: iPOS 0104789847 có 0 HĐ mang MSTTCGP này (8 PDF iPOS lấy qua link mail nằm ở HĐ MTT không có
+  MSTTCGP), KiotViet 0104359717 chưa có PDF nào trong DB; ASIA 1, Minh Khang 2, Mắt Bão 2, Online VI NA 2, Phương Nam 4,
+  Rosy 5, MobiFone 5, VININVOICE 5, Win Tech 7 HĐ có PDF. User sẽ tự tìm thêm dữ liệu cho VETC, iPOS, KiotViet.
+
+## 3.5 Backend WeInvoice (`we-invoice/we-scraping-api`, viết 02/11/2026, chưa commit)
+
+- Repo con có `CLAUDE.md` riêng, rất chặt: tạo record trước khi làm (`docs/features|bugs|issues/...-YYYY-MM-DD.md`), SQL để
+  DBA chạy tay, dừng ở READY FOR MANUAL COMMIT, không tự commit/push. Record của đợt này:
+  `docs/features/addon-service/weinvoice/weinvoice-api-implementation-2026-11-02.md` (+ `README.md`, `interface-specification.md`).
+- Module `src/main/java/com/kosign/wecms/domain/weinvoice/`: 40 endpoint `/api/v1/weinvoice` + Partner API `/api/partner/v1`
+  (header `X-Api-Key`). BE nối **thẳng DB của engine** bằng pool riêng (`WeInvoiceDb`, không phải bean `DataSource` — tạo bean
+  thì auto-config của Spring lùi lại và các repo JDBC cũ trỏ nhầm DB). Bảng engine chỉ đọc; bảng WeInvoice ở schema `weinvoice`
+  (`src/main/resources/db/weinvoice/V1__winv_schema.sql`, 11 bảng) — **chưa chạy trên DB nào**.
+- Việc của engine còn thiếu: worker đọc `weinvoice.winv_engn_rqst` (LOGIN_TEST, SYNC, FETCH_XML, FETCH_PDF, IMPORT, TEST_DATA),
+  lấy mật khẩu GDT từ `winv_cmpn_infm` (AES-256-GCM, `WECMS_WEINVOICE_SECRET_KEY`) thay cho `.env`, ghi `winv_sync_cvrg`.
+  Hợp đồng chi tiết ở `README.md` §"Engine contract" của module.
+- Build trên máy này: Gradle cần JVM 17+ mà máy mặc định Java 11 →
+  `JAVA_HOME=$HOME/.gradle/jdks/eclipse_adoptium-21-amd64-windows.2 ./gradlew test --offline`. Bộ test đầy đủ có **13 lỗi sẵn
+  có** (`ActuatorEndpointSecurityTest`, `SchedulerConfigurationContractTest`, `OperatingHoursZoneConsistencyTest`) vì thiếu
+  `application-local.yml` (gitignore) — có cả trên HEAD gốc, không phải lỗi mới.
+- Endpoint mới phải có `@menuAuthz` hoặc nằm trong allow-list của `EndpointAuthorizationCoverageTest` (WeInvoice đang ở allow-list).
+- pgjdbc không cho `rs.getObject(col, Long.class)` với cột `numeric` → đọc số có thể null bằng `getLong` + `wasNull`.

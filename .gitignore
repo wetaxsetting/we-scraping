@@ -67,3 +67,21 @@ runs/*/*
 !runs/*/history.csv
 # g_200x70 (Thái Sơn): bản height=32, test 89,24%, meta đã vá charset (23/10 dùng lại cho adapter)
 !runs/g_200x70/
+# g_180x50_vn (vninvoice.vn): adapter vninvoice 02/11, cổng thật 28/30, HĐ thật 15/15
+!runs/g_180x50_vn/
+# g_160x75 (hoadon30s / P.A Việt Nam): train 02–03/11, test 86,16%; adapter pavietnam chưa dùng
+!runs/g_160x75/
+
+# WeInvoice UI Spec v1.0 (PO bàn giao 30/10): giữ bản bàn giao (00/01/02, bat, 2 zip) + weinvoice-web/
+# (mã nguồn UI để đọc/grep, trùng nội dung WeInvoice_UI_Source_v1.0.zip). Bỏ các bản giải nén tay khác
+# (trùng 100% zip), thư mục chay_prototype.bat tự giải nén (kèm data/state.json) và file build Next.js.
+# TestData/ chỉ giữ thư mục: dev hay bỏ XML/PDF thật vào để thử prototype.
+docs/WeInvoice_UI_Spec_v1.0/WeInvoice_Prototype_v1.0/
+docs/WeInvoice_UI_Spec_v1.0/WeInvoice_UI_Source_v1.0/
+docs/WeInvoice_UI_Spec_v1.0/WeInvoice_Prototype/
+docs/WeInvoice_UI_Spec_v1.0/**/node_modules/
+docs/WeInvoice_UI_Spec_v1.0/**/.next/
+docs/WeInvoice_UI_Spec_v1.0/**/*.tsbuildinfo
+docs/WeInvoice_UI_Spec_v1.0/TestData/**
+!docs/WeInvoice_UI_Spec_v1.0/TestData/**/
+!docs/WeInvoice_UI_Spec_v1.0/TestData/**/.gitkeep

@@ -117,12 +117,26 @@ groups:
   clahe: false
   clip_above: null
   note: (300, 75) n=2000 len 5-5 drop 0.6% ring_raw 226
+- group_id: g_150x38
+  sizes:
+  - - 150
+    - 38
+  charset: 0123456789abcdefghikmnopqrstuvwxyz
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 126
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: "(150, 38) Dich vu cong Thue (dichvucong.gdt.gov.vn/tthc/login, captcha dang nhap /tthc/login/getCaptcha; Danh_sach_NCC dong 135). 02/11: 10.999 anh, len 5, khong trung. Bang chu 34: so 0-9 + a-z tru j l (j da sua thanh i; con 10 nhan l). Font co so 0 gach cheo, khac chu o. ~1.293 mau/ky tu train"
 - group_id: g_160x75
   sizes:
   - - 160
     - 75
-  charset: 0123456789abcdefghijklmnopqrstuvwxyz
-  charset_mode: fixed
+  charset: 23456789abcdefghjkmnprstuvwxyz
+  charset_mode: core
   min_freq: 0.005
   review: false
   width: 68
@@ -130,7 +144,7 @@ groups:
   in_channels: 1
   clahe: false
   clip_above: null
-  note: (160, 75) n=1995 len 5-6 drop 0.3% ring_raw 233
+  note: "(160, 75) hoadon30s. 02/11: 5.495 anh, len 5, khong trung. Bang chu 30: khong co 0 1 i l o q (Z 2, i 2, G 1, P 1 lan = nhieu). ~916 mau/ky tu. Ban train cu (n=1.995, charset fixed 36) val_em 0"
 - group_id: g_600x120
   sizes:
   - - 600
@@ -322,6 +336,20 @@ groups:
   clahe: false
   clip_above: null
   note: "(200, 80) len 5. Bang chu that 30 ky tu (27/10): toan chu thuong, khong co 0 1 g i o w. 28/10: 2.575 anh, da ha chu HOA (lower_labels_20261028.csv), core bo 53 anh con g/1/i/w; train ~322 mau/ky tu"
+- group_id: g_100x36
+  sizes:
+  - - 100
+    - 36
+  charset: 2346789ABCDEFGHJKLMNPRTUVWXY
+  charset_mode: core
+  min_freq: 0.005
+  review: false
+  width: 89
+  height: 32
+  in_channels: 1
+  clahe: false
+  clip_above: null
+  note: "(100, 36) Lac Viet. 31/10: thu muc cu ten env/g_150x32 nhung anh that la 100x36 -> doi ten. 10.959 anh, len 4, khong trung. Bang chu 28: khong co 0 1 5 I O Q S Z (Q 22, I 6, O 1 lan = nhieu). ~1.560 mau/ky tu"
 - group_id: g_70x23
   sizes:
   - - 70

@@ -31,6 +31,7 @@ PROD_MODELS = {
     "g_120x38": "adapter megabiz",
     "g_194x35": "adapter pvoil",
     "g_120x40_cloud": "adapter cloudteam (Nhom May)",
+    "g_180x50_vn": "adapter vninvoice (VN-Invoice)",
 }
 PACKAGES = ["torch", "numpy", "cv2", "PIL", "yaml", "requests", "psycopg2",
             "dotenv", "openpyxl", "fitz", "playwright", "skia", "ddddocr"]
