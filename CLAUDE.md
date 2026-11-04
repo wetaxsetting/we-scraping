@@ -494,6 +494,8 @@ Các adapter dưới đây đã thử thật trên XML thật (10/2026):
 | `mobifone`       | MobiFone (tracuuhoadonvienthong. / tracuuhoadon.mobifone.vn; cổng chung tracuuhoadon.mobifoneinvoice.vn) | 0100686209 (+ -002) | "số bảo mật" **chỉ có trong mail** (`sobaomat=`) → `POST /Tracuu2/GetInfoInvoice` → `PrintInvoice` (PDF) + `ExportZipFileXML` | không. Thật 10/10 (27/10, link mail). XML Thuế không có mã → HĐ chỉ có XML vẫn `no_code` |
 | `kiotviet`       | KiotViet (api.einvoice.kiotviet.vn) | 0104359717 | `mtc` từ link mail `?shd=&mtc=` (HĐ MTT không có mã trong XML) | không. Thật 1/1 PDF + XML (27/10) |
 | `vninvoice`      | VN-Invoice (tracuu.v50.vninvoice.vn; API gateway.v50.vninvoice.vn) | 0101352495, 0103018807 | TTKhac "Mã bảo mật" (FamilyMart 20 ký tự, Phong Vũ 7 số; PDF in là "Mã tra cứu"/"Số bảo mật") + MST bán + ngày lập → `POST portal-public` → `download/public/unofficial` (PDF base64 ở `fileBytes`) / `download/public/xml` | `g_180x50_vn` (6 ký tự, phân biệt hoa/thường; đáp án ≠ 6 ký tự → xin ảnh mới). Cổng trả **HTTP 500** cho captcha sai ("Mã xác thực không đúng") nên adapter tự gọi HTTP, không qua `common.request`. Thật **15/15 PDF + XML** (02/11, ~3 s/HĐ) |
+| `fpt`            | FPT eInvoice (tracuuhoadon.fpt.com.vn) | 0104128565 | MST bán + mã `sec` (**chỉ có trong mail**) | reCAPTCHA v3, server kiểm → job **không tự tra**: nhập JSON `/api/search` do script trình duyệt `pdf_providers/fpt.py` (người chạy) lưu vào `output/manual/fpt/` (JSON có `pdf` base64 + `xml`), xem mục "HT, EFY, FPT". Thật 4/4 (03/11) |
+| `ameinvoice`     | AMEINVOICE / NC9 Việt Nam (ameinvoice.vn) | 0312270160 | `key_receive` (20 số) trong `lookup_url` của XML (`/einvoice/?key_receive=`) hoặc link mail → `GET /view-teamplate-invoice/?down_pdf=true&key_receive=` | không (reCAPTCHA trên trang chỉ của form liên hệ Contact Form 7). PDF có BOM trước `%PDF` → adapter cắt. `down_xml` trả HTML, không dùng. Thật 2/3 (03/11); C23TLB-128 người bán 0314391594: máy chủ trả `Connection Failed: 1049` (mất CSDL 2023 phía NCC) → `server` |
 
 **Adapter thêm 27/10 cho NCC trong `docs/Danh_sach_NCC.xlsx` — CHƯA có HĐ thật** (DB không có HĐ/link nào của các MSTTCGP
 này): mỗi cổng chỉ mới kiểm phản hồi "không tìm thấy" (và captcha sai/đúng) bằng mã bịa; nhánh tải PDF suy từ JS/HTML của
@@ -513,17 +515,19 @@ gom mọi trường giống "mã tra cứu/số bảo mật".
 - Không làm được qua link (ghi ở sheet WBS2 cột Ghi chú): reCAPTCHA v2 (L.C.S, EFY, HT, Máy tính & TT, New-Invoice, idoc,
   ACC Online, Safecert, CMC, Mobile-ID), v3 (FPT + đại lý oinvoice, VNPAY, Nhân Hòa, Haravan, Pancake, Taxnet, Bado), Turnstile
   (TS24, Bizzi), đăng nhập (VDSG, NCCA, ONTIK, TAX24 — `tax24.com.vn/einvoice` là cổng đăng nhập, `g_180x50_tax24` là captcha
-  đăng nhập), model chưa dùng được (vninvoice, Ngô Gia Phát, Bitware, Lạc Việt), NC9/ameinvoice (máy chủ NCC lỗi DB). **Cần 1 mã
+  đăng nhập), model chưa dùng được (vninvoice, Ngô Gia Phát, Bitware, Lạc Việt). (NC9/ameinvoice: đã làm 03/11, adapter
+  `ameinvoice`; chỉ CSDL 2023 của người bán 0314391594 lỗi phía NCC.) **Cần 1 mã
   thật mới làm được:** KK VAT, Nacencomm, 3A, TADU (ZK `/zkau`) — script dò để trong scratchpad phiên 27/10.
   FPT Shop `hddt.fptshop.com.vn`: tra bằng mã 16 số không cần captcha, nhưng bước tải trả **PDF của khách khác** → không làm.
 
 Không làm (26/10): `einvoice.com.vn` / `hoadon.ftg.vn` là Thái Sơn (cổng riêng yeungkyung., lotterentacarvina.einvoice.com.vn —
-mail đã kèm file; link `/xac-nhan-email/` **không bao giờ mở**); ameinvoice.vn (1 mail, đã kèm PDF); e-invoice-tt78.vingroup.net
+mail đã kèm file; link `/xac-nhan-email/` **không bao giờ mở**); e-invoice-tt78.vingroup.net
 (tra cần MST + mẫu + ký hiệu + số + mã bí mật + captcha, mail không đủ thông tin).
 
 **Cổng riêng người bán thêm 23/10** (tìm từ dòng "Tra cứu hóa đơn tại website" in trên PDF trong mail):
 - VNPT `-tt78` (luồng tt78 + `g_80x30`; đọc captcha độ tin thấp thì xin ảnh mới thay vì gửi bừa): Golf Long Thành
-  3600718503 (TTKhac `Extra`, thiếu thì MCCQT, 6/6), SW F&B CN2 0313894637-002 (MCCQT, 6/6), Navigos 0304836029
+  3600718503 (TTKhac `Extra`, thiếu thì MCCQT, 6/6), SW F&B CN2 0313894637-002 (MCCQT, 6/6), SW F&B trụ sở 0313894637
+  (cổng riêng `swfoodsbeverages-tt78`, MCCQT, 3/3 — 03/11; không nằm trên cổng CN2), Navigos 0304836029
   (MCCQT, 1/1). Rule trong `SELLER_PORTALS` có `keys` = lấy mã tra từ trường nào. `seller_rule()`: khớp MST đúng →
   MST công ty mẹ → tên; nhờ đó Xăng dầu Sài Gòn 0300555450-001 vào cổng Petrolimex (2/2).
 - HILO Kim Đại Phát 3603526528 (`tracuuhddt78.hilo.com.vn`, 3/3): form tra có reCAPTCHA v3 nên không dùng; tải qua
@@ -567,7 +571,8 @@ Quy tắc khi viết adapter:
 
 - ASIA 0101162173 (asiainvoice.vn/tra-cuu): captcha 150x30 đọc được bằng ddddocr + `.upper()` (22/30 qua),
   nhưng tra bằng **FKey** chỉ có trong mail ASIA gửi; XML Thuế không có (thử MCCQT: không ra). Viết adapter khi có mail ASIA.
-- **HT, EFY, FPT — tra cứu NCC bị chặn bởi reCAPTCHA, phải lấy PDF qua phương thức khác (mail).**
+- **HT, EFY, FPT — cổng tra cứu có reCAPTCHA (03/11): FPT đã lấy được; HT, EFY đang nghiên cứu** (quá trình nghiên cứu,
+  khách hàng yêu cầu lấy HĐ).
   Kiểm 23/10 (gửi tra cứu bằng mã thật, để trống token, 2–3 lần/cổng): server cả 3 đều kiểm token thật.
 
   | NCC | MSTTCGP | Cổng tra cứu | reCAPTCHA | Server trả khi thiếu token |
@@ -576,10 +581,26 @@ Quy tắc khi viết adapter:
   | EFY | 0102519041 | ihoadon.vn/kiem-tra (`POST /kiem-tra/check`) | v2 Enterprise | `VE001 "Mã xác minh không đúng"` (mã bịa cũng vậy → chặn trước khi tra) |
   | FPT | 0104128565 | tracuuhoadon.fpt.com.vn (`GET /api/search?...&token=`) | v3 | HTTP 500 `invalid-input-response` (server gọi siteverify của Google) |
 
-  **Không viết adapter, không vượt reCAPTCHA** (không giải tự động, không CapSolver/Anti-reCaptcha/Botasaurus,
-  không gọi `api2/reload` lấy token, không dùng trình duyệt tự động). PDF lấy qua: (1) mail — XML/PDF đính kèm
-  (mục 2.7); (2) người tự tra trên trình duyệt rồi nạp PDF vào (đang đề xuất lệnh `import-pdf`); (3) xin NCC
-  kênh chính thức (API / tài khoản khách hàng) nếu số HĐ lớn.
+  **FPT/HT/EFY: tìm cách xử lý hóa đơn** (03/11, theo user: khách hàng yêu cầu, phục vụ nghiên cứu). Chỉ tra HĐ
+  của chính công ty bằng mã tra cứu thật, nhịp chậm. Thử theo thứ tự: (1) mail — XML/PDF đính kèm (mục 2.7);
+  (2) trình duyệt (Playwright, `pdf_providers/fpt.py` là bản thử cho FPT: mở `?mst=&sec=`, bắt JSON `/api/search`
+  rồi trích PDF); (3) người tự tra trên trình duyệt rồi nạp PDF vào (lệnh `import-pdf`, đang đề xuất);
+  (4) xin NCC kênh chính thức (API / tài khoản khách hàng) nếu số HĐ lớn.
+  **Kết quả 03/11:** FPT 4 (C25TAB 943/1128/1129/1156 của Samsung SDS, mã `sec` từ mail; JSON `/api/search` có sẵn
+  `pdf` base64 + `xml` + `form/serial/seq/stax/idt`), HT 2, EFY 6 (người tích reCAPTCHA, script bắt PDF + kiểm số HĐ
+  + lưu đúng thư mục) → ghi `invoice_pdf.source_id` = `fpt`/`ht`/`efy`. Còn thiếu vì **không có mã ở đâu**: FPT 13 HĐ
+  C23TAB 2023, EFY 3 HĐ (0317582981 số 57; 3703125142 số 20, 50). XML FPT/EFY không có mã tra cứu — mã chỉ có trong mail.
+  **FPT: đã nối vào job** — adapter `fpt` (`pdf_providers/fpt_import.py`): người chạy script trình duyệt
+  `pdf_providers/fpt.py` (`?mst=<MST bán>&sec=<mã mail>`) và lưu JSON `/api/search` vào
+  `<INVOICE_OUTPUT_DIR>/manual/fpt/*.json`; lượt `pdf`/`tick` kế tiếp: `_prepare_queues` thấy JSON chưa dùng →
+  đưa HĐ FPT `no_portal` về hộp chờ → adapter khớp (MST bán, mẫu, ký hiệu, số), kiểm số HĐ, ghi `invoice_pdf`,
+  chuyển JSON sang `used/`. Chưa có JSON của HĐ → `no_portal` (nằm chờ, không tốn lượt). Job không tự mở cổng FPT.
+  **HT, EFY: đang nghiên cứu.** `pdf_providers/manual_portals.py` khai báo 2 NCC này (source_id `ht`/`efy`, MSTTCGP,
+  cổng, tình trạng); `fetch_pdf` ném `no_portal` cho tới khi có adapter.
+  `fpt`/`ht`/`efy` **cố ý không khai `hosts`** để link mail giữ `new` chứ không thành `ignored` vĩnh viễn. Adapter `fpt`
+  nhận MSTTCGP 0104128565 nên HĐ Fahasa (FPT tự host) trong XML cũng chờ JSON; Fahasa vẫn lấy qua link mail (`fahasa`).
+  Cùng ngày: BKAV 35/35 HĐ thiếu PDF (task `pending`, `attempts=0` — worker PDF chưa chạy tới, adapter `bkav` không
+  lỗi) và NC9 C23TVN-424 (`ameinvoice`) cũng ghi `invoice_pdf` → BKAV đủ 501/501.
 - TS24 0309478306 (tracuu.xuathoadon.vn, Cloudflare Turnstile): cùng lý do — lấy qua mail.
 - **Khảo sát 23/10, không làm:** MobiFone 0100686209 (+ -002, 61 HĐ hthdon=2): cổng `tracuuhoadonvienthong.mobifone.vn`
   không captcha, tra bằng "số bảo mật" (`/Tracuu/PrintInvoicePdf?sobaomat=`), nhưng không HĐ nào của mình có mã này
@@ -618,8 +639,15 @@ cổng EasyInvoice cần MST người bán chưa biết).
 → `process_links` thêm dòng `MST người bán: X` vào `mail_text`. Nhờ đó: `minvoice` nhận link `tracuuhoadon.minvoice.vn`
 (MST bán + số bảo mật, thật 2/2); `vnpt` nhận `invoice-noibai.vietnamairport.vn` → cổng `han-tt78` theo mã tra cứu nhanh
 (`LINK_HOST_PORTALS`, thật 1/1 — link PdfDownload 2023 đã hết hạn, trả trang "Nhập tổng tiền") và host `-tt78` có dấu `_`.
+**Link mail Viettel `vinvoice.viettel.vn/tracuu?tax-code=&secret-code=` (03/11):** `secret-code` 32 hex của link KHÔNG tra
+được (`downloadPDF` báo không tìm thấy, `downloadPDFForMail` của trang /tracuu trả `query.invoice.not.valid`); "Mã số bí mật"
+15 ký tự in trong thân mail thì tra được (4/4) → adapter ưu tiên mã đó. 95 link đã đặt lại `attempts=0`.
+CMC `invoice.cmctelecom.vn/outputs/CTEL….pdf` (10 link 2024): host cũ không còn trả lời → không làm.
+Cổng Genuwin (`genuwinsolution.com`, TTKhac `Gkey` + `PortalLink`): tên miền không còn phân giải → 2.161 HĐ bán ra
+Webcash 2023-01 → 2024-06 + 12 HĐ mua (Genuwin D&C, Paris Baguette) không lấy PDF tự động được; xin team WeTax nội bộ.
 **Mail đã xử lý trước 27/10 không tự có mã/MST mới** (stats lưu lúc đọc mail) → phải sửa `stats` + đặt lại link về `new`.
-Không làm: CMC, EFY (`tracuu.ihoadon.vn`), FPT `?mst=&sec=` (reCAPTCHA, server kiểm), HDBank (OTP), Grab Zendesk, FPT Shop;
+Link EFY (`tracuu.ihoadon.vn`), FPT `?mst=&sec=` (reCAPTCHA, server kiểm): đang tìm cách xử lý, xem mục HT/EFY/FPT.
+Không làm: CMC, HDBank (OTP), Grab Zendesk, FPT Shop;
 ABBank (captcha ảnh, HĐ của Genuwin 1201547669 không phải công ty mình), Vingroup (captcha, chưa model).
 
 ## 2.7 Mail hóa đơn (`mail_reader.py`, `mail_ingest.py`)
@@ -769,7 +797,7 @@ rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API ch
 | `status` gốc / thay thế / bị thay thế / điều chỉnh / bị điều chỉnh / đã huỷ       | `tthai` 1 / 2 / 4 / 3 / 5 / 6                                                                       |                                                                                                                               |
 | `relatedId` (thay thế ↔ bị thay thế)                                              | `parsed.thong_tin_chung.hoa_don_lien_quan` (XML), `list_raw.khhdgoc/shdgoc` (API JSON)              | Không có cột, phải nối lúc đọc                                                                                                |
 | `cqtCode`                                                                         | `parsed.ma_cqt`, `list_raw.mhdon`                                                                   |                                                                                                                               |
-| `provider` + `providerTaxId`                                                      | `invoice_xml.mst_tcgp` (thiếu thì `list_raw.msttcgp`) → tra `PROVIDERS`                             | `einvoice_providers.name` trống cả 42 dòng                                                                                    |
+| `provider` + `providerTaxId`                                                      | `invoice_xml.mst_tcgp` (thiếu thì `list_raw.msttcgp`) → tra `PROVIDERS`                             | `einvoice_providers` đã điền 03/11: `name` = tên ngắn trong `PROVIDERS` (46/47, thiếu 0314420012), `source_id` = adapter job tự chọn theo MSTTCGP (37/47) — chỉ điền ô trống |
 | `lookupCode` / `lookupUrl`                                                        | `invoice_xml.ma_tra_cuu` / `lookup_url`                                                             | BKAV tra bằng `parsed.dlhdon_id`                                                                                              |
 | `sellerAddress` / `buyerAddress`                                                  | `parsed.nguoi_ban/nguoi_mua.dia_chi`, `list_raw.nbdchi/nmdchi`, `partners.address`                  |                                                                                                                               |
 | `items[].vatRate` (0/5/8/10, −1 = KCT)                                            | `invoice_details.thue_suat` TEXT                                                                    | Có thêm `KKKNT`, `KHAC:x%`                                                                                                    |

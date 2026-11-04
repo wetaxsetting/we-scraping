@@ -629,6 +629,16 @@ def _prepare_queues(store) -> None:
                           error_kind="no_source")      # 'no_portal' chờ bổ sung cổng thủ công
         if n:
             log.info("MSTTCGP %s đã có adapter → %d HĐ quay lại hàng đợi PDF", mst_tcgp, n)
+    # Adapter nhận file người tải tay (vd FPT: JSON /api/search) có file mới → HĐ 'no_portal' thử lại
+    for source_id in pdf_providers.available():
+        adapter = pdf_providers.get_adapter(source_id)
+        if not getattr(adapter, "has_pending_input", lambda: False)():
+            continue
+        for mst_tcgp in adapter.mst_tcgp:
+            n = store.requeue("no_source", task_type="pdf", mst_tcgp=mst_tcgp, error_kind="no_portal")
+            if n:
+                log.info("%s có file chờ nhập → %d HĐ MSTTCGP %s quay lại hàng đợi PDF",
+                         source_id, n, mst_tcgp)
     # HĐ máy tính tiền không có MSTTCGP: định tuyến được (link / NCC quen của người bán) → chạy lại
     routable = [t["task_id"] for t in store.no_source_without_tcgp() if pick_adapter(store, t) is not None]
     n = store.requeue_tasks(routable)
@@ -1047,7 +1057,8 @@ def cmd_status(store, args) -> int:
         print("\nNgười bán chưa biết cổng tra cứu (bổ sung vào SELLER_PORTALS, xem 'Website tra cứu'"
               " in trên hóa đơn, rồi chạy: requeue --status no_source --mst-tcgp <MSTTCGP>):")
         for r in rep["no_portal"]:
-            print(f"  MSTTCGP {r['mst_tcgp']:12} người bán {r['nbmst']:14} {r['n']:>5} HĐ  {r['nbten'] or ''}")
+            # HĐ MTT không có MSTTCGP trong XML → mst_tcgp NULL
+            print(f"  MSTTCGP {r['mst_tcgp'] or '?':12} người bán {r['nbmst']:14} {r['n']:>5} HĐ  {r['nbten'] or ''}")
     if rep["mails"]:
         print("\nMail hóa đơn (theo trạng thái):",
               ", ".join(f"{r['status']} {r['n']}" for r in rep["mails"]))

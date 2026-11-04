@@ -336,9 +336,11 @@ def test_branch_matches_parent_mst_but_exact_wins():
     petro_cn = {"nbmst": "0300555450-001",
                 "nbten": "CHI NHÁNH XĂNG DẦU SÀI GÒN - CÔNG TY XĂNG DẦU KHU VỰC II TNHH MỘT THÀNH VIÊN"}
     assert vnpt.VnptAdapter.portal_for(petro_cn) == "https://hoadon.petrolimex.com.vn"
-    # SW chi nhánh 1 (BKAV) không được khớp sang cổng của chi nhánh 2; MST mẹ cũng không
-    assert vnpt.VnptAdapter.portal_for({"nbmst": "0313894637-001"}) is None
-    assert vnpt.VnptAdapter.portal_for({"nbmst": "0313894637"}) is None
+    # SW: MST mẹ có cổng riêng (không phải cổng của chi nhánh 2). Chi nhánh 1 phát hành qua BKAV nên
+    # không bao giờ tới adapter VNPT; nếu có thì theo luật MST mẹ, không sang cổng chi nhánh 2.
+    assert vnpt.VnptAdapter.portal_for({"nbmst": "0313894637"}) == "https://swfoodsbeverages-tt78.vnpt-invoice.com.vn"
+    assert vnpt.VnptAdapter.portal_for({"nbmst": "0313894637-001"}) == "https://swfoodsbeverages-tt78.vnpt-invoice.com.vn"
+    assert vnpt.VnptAdapter.portal_for({"nbmst": "0313894637-002"}) == "https://swfoodsbeveragescn2-tt78.vnpt-invoice.com.vn"
 
 
 def test_golf_downloads_with_extra_code(monkeypatch, captcha_ok):

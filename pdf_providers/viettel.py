@@ -77,11 +77,14 @@ class ViettelAdapter(PdfAdapter):
         Mail S-Invoice cũ: link trang chủ + mã bí mật trong mail, MST bán theo tên ở tiêu đề (MAIL_SELLERS).
         """
         p = link_params(url)
-        mst, secret = p.get("tax-code"), p.get("secret-code")
+        mst = p.get("tax-code")
+        # "secret-code" của link (32 hex) KHÔNG tra được: downloadPDF trả "không tìm thấy", và
+        # downloadPDFForMail (API trang /tracuu dùng) trả query.invoice.not.valid. Mã bí mật 15 ký tự
+        # in trong thân mail thì tra được (thật 4/4, 03/11) → ưu tiên mã đó.
+        mail_code = (code or "").strip().upper()
+        secret = mail_code if _SECRET_RE.match(mail_code) else p.get("secret-code")
         if not secret:
-            secret = (code or "").strip().upper()
-            if not _SECRET_RE.match(secret):
-                return None
+            return None
         if not mst:
             mst = self.mail_seller(mail_text)
         if not (mst and secret):

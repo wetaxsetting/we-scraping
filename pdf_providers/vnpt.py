@@ -87,6 +87,7 @@ PORTALS = {
     "vttphcm": "https://vttphcm-tt78.vnpt-invoice.com.vn",     # VNPT TP.HCM (cước viễn thông) — dạng -tt78
     "golflongthanh": "https://golflongthanh-tt78.vnpt-invoice.com.vn",
     "swfoodsbeveragescn2": "https://swfoodsbeveragescn2-tt78.vnpt-invoice.com.vn",
+    "swfoodsbeverages": "https://swfoodsbeverages-tt78.vnpt-invoice.com.vn",
     "navigos": "https://navigos-tt78.vnpt-invoice.com.vn",
 }
 
@@ -103,6 +104,8 @@ SELLER_PORTALS = [
     {"portal": "golflongthanh", "mst": {"3600718503"}, "keys": ("Extra", "ma_cqt")},
     # SW F&B chi nhánh 2 (CN 1 dùng BKAV): mã tra cứu in trên PDF = MCCQT (thật 6/6)
     {"portal": "swfoodsbeveragescn2", "mst": {"0313894637-002"}, "keys": ("ma_cqt",)},
+    # SW F&B trụ sở (HĐ 2023): cổng riêng không có "cn2", mã = MCCQT (thật 3/3, 03/11)
+    {"portal": "swfoodsbeverages", "mst": {"0313894637"}, "keys": ("ma_cqt",)},
     {"portal": "navigos", "mst": {"0304836029"}, "keys": ("ma_cqt",)},      # Navigos Group (thật 1/1)
 ]
 

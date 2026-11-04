@@ -101,6 +101,9 @@ from . import cloudteam  # noqa: E402,F401  Nhóm Mây cloudteam.vn (0312617990)
 from . import pmbk  # noqa: E402,F401  Bách Khoa hdbk / hoadonbachkhoa.pmbk.vn (0202029650, 0200784873) — mã tra cứu
 from . import vietinvoice  # noqa: E402,F401  VIET-INVOICE / iCORP (0106870211) — 2 cổng: API white-label + /erp/rest như vininvoice
 from . import wetax  # noqa: E402,F401  WeTax (api.wetax.com.vn) — chỉ link tải thẳng pdf/xml trong mail
+from . import ameinvoice  # noqa: E402,F401  AMEINVOICE / NC9 ameinvoice.vn (0312270160) — key_receive trong lookup_url, không captcha
+from . import manual_portals  # noqa: E402,F401  HT (0315638251), EFY (0102519041) — reCAPTCHA, đang nghiên cứu; khai báo, luôn no_portal
+from . import fpt_import  # noqa: E402,F401  FPT (0104128565) — reCAPTCHA v3; job nhập JSON /api/search do script trình duyệt tải về
 from . import vninvoice  # noqa: E402,F401  VN-Invoice vninvoice.vn (0101352495, 0103018807) — TTKhac "Mã bảo mật"; captcha g_180x50_vn
 
 

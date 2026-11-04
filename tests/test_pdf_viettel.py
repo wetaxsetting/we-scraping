@@ -169,3 +169,10 @@ def test_invoice_from_link_vinvoice_params_still_win():
     inv = viettel.ViettelAdapter().invoice_from_link(
         "https://vinvoice.viettel.vn/tracuu?tax-code=0313592114&secret-code=UY0U5AFNXKNIXN3", None, "")
     assert inv["nbmst"] == "0313592114" and inv["ma_tra_cuu"] == "UY0U5AFNXKNIXN3"
+
+
+def test_invoice_from_link_vinvoice_prefers_mail_secret_over_link_hex():
+    # Link mail mới: secret-code 32 hex không tra được; mã bí mật 15 ký tự trong thân mail thì được
+    inv = viettel.ViettelAdapter().invoice_from_link(
+        "https://vinvoice.viettel.vn/tracuu?tax-code=0313592114&secret-code=" + "A1" * 16, "mk2cab12cd34ef5", "")
+    assert inv["nbmst"] == "0313592114" and inv["ma_tra_cuu"] == "MK2CAB12CD34EF5"
