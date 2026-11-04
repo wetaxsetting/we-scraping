@@ -323,8 +323,11 @@ python -X utf8 -m pytest tests -q -k "invoice or xml_parser or fetch_pdf or pdf_
 
 ```powershell
 # Lấy HĐ theo khoảng ngày tự chọn → DB (chạy tay; cùng luồng với job, không làm lệch mốc đồng bộ của tick)
-python -X utf8 web/main_auto.py --from 2026-08-01 --to 2026-09-30 [--company MST] [--type all|mua-all|ban-all] [--pdf] [--excel]
+python -X utf8 web/main_auto.py --from 2026-08-01 --to 2026-09-30 [--company MST | --all-companies] [--type all|mua-all|ban-all] [--pdf] [--excel]
 ```
+
+`--all-companies` (04/11): chạy lần lượt mọi công ty `active` dưới 1 khóa; mỗi công ty 1 dòng `job_runs`; công ty lỗi (kể cả
+exception) không chặn công ty sau, cuối lượt in `--company` cần chạy lại. `--xml-limit` tính riêng từng công ty.
 
 `web/main_auto.py` (từ 14/10) **ghi thẳng vào DB** qua đúng các hàm của job (`sync_lists` với
 `move_cursor=False`, `process_xml`, tùy chọn `process_pdf`). Khoảng dài tự chia đoạn ≤ 30 ngày (giới hạn GDT,

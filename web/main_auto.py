@@ -15,6 +15,7 @@ Usage:
     python -X utf8 web/main_auto.py --from 2026-09-01 --to 2026-09-30 --type mua-all --pdf
     python -X utf8 web/main_auto.py --from 2026-09-01 --to 2026-09-30 --excel   # xuất thêm Excel từ DB
     python -X utf8 web/main_auto.py --from 2023-01-01 --to 2026-10-26 --type mua-all   # khoảng dài
+    python -X utf8 web/main_auto.py --all-companies --from 2023-01-01               # mọi công ty active
 
 GDT chỉ cho tìm tối đa 30 ngày mỗi lần → khoảng dài tự chia đoạn ≤ 30 ngày (`--chunk-days`),
 mỗi đoạn lấy danh sách rồi tải XML luôn. Đoạn nào lỗi được in ra cuối lượt để chạy lại riêng.
@@ -66,7 +67,10 @@ def export_excel(store, mst: str, start: date, end: date, path: Path) -> int:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Lấy hóa đơn GDT theo khoảng ngày → DB")
-    ap.add_argument("--company", help="MST công ty (bỏ trống nếu DB chỉ có 1 công ty)")
+    who = ap.add_mutually_exclusive_group()
+    who.add_argument("--company", help="MST công ty (bỏ trống nếu DB chỉ có 1 công ty)")
+    who.add_argument("--all-companies", action="store_true",
+                     help="chạy lần lượt mọi công ty đang active (công ty lỗi không chặn công ty sau)")
     ap.add_argument("--from", dest="from_date", required=True, type=_parse_date, help="Từ ngày yyyy-mm-dd")
     ap.add_argument("--to", dest="to_date", type=_parse_date, default=None,
                     help="Đến ngày yyyy-mm-dd (mặc định hôm nay)")
@@ -74,7 +78,7 @@ def main(argv=None) -> int:
                     help="all = mua-all + ban-all (mặc định)")
     ap.add_argument("--chunk-days", type=int, default=job_policy.MAX_SPAN_DAYS,
                     help="số ngày mỗi đoạn (tối đa %d — giới hạn của GDT)" % job_policy.MAX_SPAN_DAYS)
-    ap.add_argument("--xml-limit", type=int, default=10000, help="số XML tối đa tải trong lượt này")
+    ap.add_argument("--xml-limit", type=int, default=10000, help="số XML tối đa tải trong lượt này (mỗi công ty)")
     ap.add_argument("--pdf", action="store_true", help="chạy luôn hàng đợi PDF sau khi lấy XML")
     ap.add_argument("--excel", action="store_true", help="xuất danh sách HĐ trong khoảng ngày ra Excel (từ DB)")
     args = ap.parse_args(argv)
@@ -91,20 +95,47 @@ def main(argv=None) -> int:
 
     store = invoice_job.InvoiceStore(dsn)
     try:
-        company = _pick_company(store, args.company)
-        if company is None:
-            log.error("Không xác định được công ty: thêm --company <MST> "
-                      "(công ty phải có trong DB: invoice_job.py add-company)")
-            return 2
+        if args.all_companies:
+            companies = store.active_companies()
+            if not companies:
+                log.error("Chưa có công ty nào: chạy invoice_job.py add-company trước")
+                return 2
+        else:
+            company = _pick_company(store, args.company)
+            if company is None:
+                log.error("Không xác định được công ty: thêm --company <MST> hoặc --all-companies "
+                          "(công ty phải có trong DB: invoice_job.py add-company)")
+                return 2
+            companies = [company]
         if not store.try_lock():
             log.info("Đang có lượt chạy khác (tick/sweep/pdf) → thử lại sau")
             return 0
         try:
-            return _run(store, company, args, end)
+            if not args.all_companies:
+                return _run(store, companies[0], args, end)
+            return _run_all(store, companies, args, end)
         finally:
             store.unlock()
     finally:
         store.close()
+
+
+def _run_all(store, companies, args, end: date) -> int:
+    """Lần lượt từng công ty; công ty lỗi (cả exception) ghi lại rồi chạy công ty sau."""
+    results = []
+    for i, company in enumerate(companies, 1):
+        mst = company["company_mst"]
+        log.info("===== Công ty %d/%d: %s =====", i, len(companies), mst)
+        try:
+            rc = _run(store, company, args, end)
+        except Exception as e:  # noqa: BLE001
+            log.exception("[%s] lỗi, chuyển sang công ty sau: %s", mst, e)
+            rc = 1
+        results.append((mst, rc))
+    failed = [m for m, rc in results if rc]
+    log.info("Xong %d công ty: %d ok, %d lỗi/thiếu%s", len(results), len(results) - len(failed), len(failed),
+             (" — chạy lại riêng: " + ", ".join(f"--company {m}" for m in failed)) if failed else "")
+    return 1 if failed else 0
 
 
 def _run_chunks(store, company, tokens, breaker, run_id, sub_types, chunks, xml_limit, stats, out_dir) -> list:

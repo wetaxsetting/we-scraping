@@ -161,5 +161,44 @@ def test_respects_running_job_lock(monkeypatch, wired):
     assert store.runs == [] and "company" not in wired
 
 
+CO2 = {"company_mst": "0108515678-001", "gdt_username": "0108515678-001"}
+
+
+def test_all_companies_runs_each_in_turn(monkeypatch, wired):
+    done = []
+    real_sync = invoice_job.sync_lists
+
+    def track(store, company, *a, **kw):
+        done.append(company["company_mst"])
+        return real_sync(store, company, *a, **kw)
+    monkeypatch.setattr(invoice_job, "sync_lists", track)
+    store = _Store([CO, CO2])
+    assert _run(monkeypatch, store, "--all-companies", "--from", "2026-09-01", "--to", "2026-09-30") == 0
+    assert done == ["1201496252", "0108515678-001"]
+    assert [r[1] for r in store.runs] == ["ok", "ok"]                                # 1 job_run / công ty
+
+
+def test_all_companies_continues_after_failure(monkeypatch, wired):
+    real_sync = invoice_job.sync_lists
+    done = []
+
+    def boom(store, company, *a, **kw):
+        done.append(company["company_mst"])
+        if company["company_mst"] == "1201496252":
+            raise RuntimeError("GDT sập")
+        return real_sync(store, company, *a, **kw)
+    monkeypatch.setattr(invoice_job, "sync_lists", boom)
+    store = _Store([CO, CO2])
+    assert _run(monkeypatch, store, "--all-companies", "--from", "2026-09-01", "--to", "2026-09-30") == 1
+    assert done == ["1201496252", "0108515678-001"]                                  # công ty sau vẫn chạy
+    assert [r[1] for r in store.runs] == ["error", "ok"]
+
+
+def test_all_companies_needs_companies_and_excludes_company(monkeypatch, wired):
+    assert _run(monkeypatch, _Store([]), "--all-companies", "--from", "2026-09-01") == 2
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, _Store([CO]), "--all-companies", "--company", "1201496252", "--from", "2026-09-01")
+
+
 def test_rejects_reversed_range(monkeypatch, wired):
     assert _run(monkeypatch, _Store([CO]), "--from", "2026-09-30", "--to", "2026-09-01") == 2
