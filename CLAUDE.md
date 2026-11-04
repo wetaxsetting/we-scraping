@@ -133,8 +133,8 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
   val_em tốt nhất trong `runs/<nhóm>/history.csv` (riêng `g_200x70` ghi test 89,24% của 17/10, xem 1.4); trước đó
   lệch nhiều (vd `g_160x60` ghi 0% nhưng thật 99,75%; `g_150x39` ghi 84,85%, `g_160x75` 74% nhưng history
   chỉ 2,3% / 0%). Cột L đổi `g_120x40` → `g_120x40_vnpt` (VNPT) / `g_120x40_cloud` (Nhóm Mây). Chưa có thư
-  mục `runs/` nên giữ nguyên: My-Invoice `g_180x45` (94,47%), Lạc Việt `g_150x32` (0%), VNISC
-  `g_150x50_1` (trống). Train xong nhóm nào thì cập nhật lại cột K từ history.csv.
+  mục `runs/` nên giữ nguyên: My-Invoice `g_180x45` (94,47%), VNISC `g_150x50_1` (trống). Lạc Việt
+  sửa 04/11 thành `g_100x36` / 98,72% (test). Train xong nhóm nào thì cập nhật lại cột K từ history.csv.
 
 ## 1.4 Tình trạng các nhóm (val_em tốt nhất, 19/10/2026)
 
@@ -159,6 +159,8 @@ python -X utf8 -m captcha.evaluate --group <nhóm> --split test --device cpu --n
 | `g_70x23`                                     | Bitware                                                                                                    | 84,7%  | **Train 30/10** (100 epoch ~12,1 giờ, 3.000 ảnh, bảng chữ 26 chữ HOA): test **83,67%** (300 ảnh), char 95,42%. Lỗi chính `4→3` (nuốt ký tự lặp `ZZRH→ZH`, `UUKO→UKQ`), `I→J`. Chưa có HĐ thật |
 | `g_200x80`                                    | Ngô Gia Phát                                                                                               | 15,2%  | **Train 29/10** (100 epoch ~9,5 giờ, 2.625 ảnh, bảng chữ 30): test **74,05%** (262 ảnh), char 92,75%, nhưng val_em tốt nhất chỉ 15,2% — **lệch bất thường, chưa rõ nguyên nhân, kiểm lại trước khi dùng**. Đo lại 31/10 trên máy này: val 70,99% (val_loss lúc train 5,4 vs train_loss 1,3 = overfit), cùng 2.625 ảnh, không file nào đổi sau 28/10 → nghi chia tập ở đây khác lúc train, val/test lẫn ảnh train; số thật có thể ~15%. Phải đo trên captcha thật hoặc train lại trên máy này. Lỗi chính `5→4`. Chưa có HĐ thật |
 | `g_150x30`                                    | ASIA (asiainvoice.vn)                                                                                      | —      | **Không train — tra bảng** (29/10). Cổng phát lại từ 1 **kho captcha cố định**: 7.561 file trong env chỉ là 823 ảnh khác nhau (trung bình mỗi ảnh lưu ~9 lần). Đã dọn: giữ 818 ảnh (bản sao → `env/g_150x30_dups/`, 5 ảnh không đọc chắc → `env/g_150x30_review/`, nhật ký `env/g_150x30/dedup_20261029.csv`), sửa tay 31 ảnh có nhãn mâu thuẫn. 818 ảnh ≈ 157 mẫu/ký tự, dưới ngưỡng train, nên dùng bảng `pdf_providers/data/asia_captcha.npz` (`scripts/build_asia_captcha_table.py`). Cổng thật 29/10: 55/60 captcha có trong bảng, bảng trả lời đúng 35/36 lần gửi |
+| `g_100x36`                                    | Lạc Việt (accnet.vn, 0301448733)                                                                           | 98,7%  | **Train 02/11** (60 epoch, 10.959 ảnh, bảng chữ 28 HOA + số, không `0 1 5 I O Q S Z`; tên cũ `g_150x32` — ảnh thật 100x36, đổi tên 31/10): test **98,72%** (1.096 ảnh), char 99,66%. Lỗi chính sai độ dài `4→3` (8 ảnh, nuốt ký tự lặp `WVVT→WVT`). Chưa có adapter, chưa đo trên captcha thật |
+| `g_150x38`                                    | Dịch vụ công Thuế (captcha đăng nhập `dichvucong.gdt.gov.vn/tthc/login/getCaptcha`)                        | 83,3%  | **Train 03/11** (máy khác, 60 epoch ~24,2 giờ, 10.999 ảnh, bảng chữ 34 `0–9` + `a–z` trừ `j l`): test **79,25%** (1.099 ảnh), char 95,43%. Lỗi chính sai độ dài `5→4` (84 ảnh, nuốt ký tự lặp `yy9pi→y9opi`) + `5→6` (14) → dùng thì bỏ đáp án ≠ 5 ký tự (đọc đủ 5 ký tự đúng ~87%); nhầm `o↔0` 31 ảnh (font có số 0 gạch chéo) → **kiểm nhãn `o`/`0` trước khi train lại**. LR chưa giảm lần nào (0,001 tới epoch 60), val_em đứng ~81% từ epoch 40. WBS2 ghi "Hoàn thành" theo user (04/11), **sẽ train lại**. Chưa có chỗ dùng trong job |
 | `g_160x75`                                    | hoadon30s (P.A Việt Nam, `tracuu.hoadon30s.vn/load-capcha`)                                                | 89,4%  | **Train 02–03/11 bằng `train_aug`** (máy khác, 100 epoch ~12 giờ, 5.495 ảnh, bảng chữ 30; bản cũ 1.995 ảnh val_em 0%): test **86,16%** (549 ảnh), char 96,90%, train_em 92,6% (không học thuộc). Lỗi chính sai độ dài `5→4` (40 ảnh, nuốt ký tự lặp `ww3yt→w3t`) → adapter bỏ đáp án ≠ 5 ký tự. Chưa đo trên captcha thật; adapter `pavietnam` đang tra ở cổng khác (hoadon.pavietnam.vn, ddddocr 40/40) nên chưa cần |
 
 ## 1.5 Kế hoạch train (theo ưu tiên)
@@ -515,7 +517,7 @@ gom mọi trường giống "mã tra cứu/số bảo mật".
 - Không làm được qua link (ghi ở sheet WBS2 cột Ghi chú): reCAPTCHA v2 (L.C.S, EFY, HT, Máy tính & TT, New-Invoice, idoc,
   ACC Online, Safecert, CMC, Mobile-ID), v3 (FPT + đại lý oinvoice, VNPAY, Nhân Hòa, Haravan, Pancake, Taxnet, Bado), Turnstile
   (TS24, Bizzi), đăng nhập (VDSG, NCCA, ONTIK, TAX24 — `tax24.com.vn/einvoice` là cổng đăng nhập, `g_180x50_tax24` là captcha
-  đăng nhập), model chưa dùng được (vninvoice, Ngô Gia Phát, Bitware, Lạc Việt). (NC9/ameinvoice: đã làm 03/11, adapter
+  đăng nhập), model chưa dùng được (Ngô Gia Phát, Bitware); Lạc Việt có model `g_100x36` (02/11) nhưng chưa có adapter. (NC9/ameinvoice: đã làm 03/11, adapter
   `ameinvoice`; chỉ CSDL 2023 của người bán 0314391594 lỗi phía NCC.) **Cần 1 mã
   thật mới làm được:** KK VAT, Nacencomm, 3A, TADU (ZK `/zkau`) — script dò để trong scratchpad phiên 27/10.
   FPT Shop `hddt.fptshop.com.vn`: tra bằng mã 16 số không cần captcha, nhưng bước tải trả **PDF của khách khác** → không làm.
