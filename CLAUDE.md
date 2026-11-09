@@ -309,6 +309,8 @@ python -X utf8 web/invoice_job.py worker --type xml|pdf [--per-company 20] [--ba
 python -X utf8 web/invoice_job.py status        # hộp chờ, lỗi, NCC chưa có adapter, HĐ hthdon=2, mail
 python -X utf8 web/invoice_job.py requeue --status dead|no_source [--type xml|pdf] [--mst-tcgp X]
 python -X utf8 web/invoice_job.py set-provider --mst-tcgp X --source-id Y
+# API nội bộ cho WeInvoice backend (06/11): đăng nhập thử GDT khi user thêm MST — chạy thường trực cạnh job
+python -X utf8 web/internal_api.py    # POST /internal/gdt/login-test, X-Api-Key = SCRAPING_INTERNAL_API_KEY, mặc định 127.0.0.1:8090
 
 # Tải PDF cho XML có sẵn trên đĩa (không cần DB, không gọi GDT)
 python -X utf8 web/fetch_pdf.py --company 1201496252 [--dry-run] [--mst-tcgp X] [--seller MST] [--limit N] [--force]
@@ -852,6 +854,29 @@ rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API ch
   Rosy 5, MobiFone 5, VININVOICE 5, Win Tech 7 HĐ có PDF. User sẽ tự tìm thêm dữ liệu cho VETC, iPOS, KiotViet.
 
 ## 3.5 Backend WeInvoice (`we-invoice/we-scraping-api`, viết 02/11/2026, chưa commit)
+
+- 05/11: code nằm trên nhánh local `f1_v1_weinvoice_api` (tách từ `origin/sit`, chưa commit/push; stash dự phòng
+  `weinvoice-api-2026-11-02` trên `main`). `sit` bắt `.env.*.example` **chỉ có khoá, giá trị trống** → cờ trong
+  `WeInvoiceProperties` là `Boolean` (trống = tắt). Deploy SIT: thêm 14 khoá `WECMS_WEINVOICE_*` vào `.env` host
+  trước (thiếu khoá = không khởi động được). 13 test fail sẵn có: 12 thiếu `application-local.yml`,
+  1 `VatDeclarationLifecycleTest` (fail cả trên `origin/sit` sạch).
+- 05/11 (sau khi push `8823f7f` lên `sit`): app **không khởi động** — `WeInvoiceSecretCipher` có 2 constructor mà
+  thiếu `@Autowired`. Đã sửa + test `WeInvoiceBeanConstructionTest` (record `docs/bugs/weinvoice-secret-cipher-bean-startup-fix-2026-11-05.md`),
+  chờ commit tay. Unit test gọi constructor trực tiếp nên không bắt được lỗi Spring; muốn chắc thì chạy `bootRun`.
+- Chạy local (IntelliJ hoặc `bootRun`): cần `.env.local` + `src/main/resources/application-local.yml` (cả 2 gitignore, đã tạo
+  05/11; yml import `.env.local`). Seed chứng thư `WECMS_CRYPTO_LEGACY_CERT_SEED` phải bằng giá trị legacy
+  (xem `docs/security/ops-secret-rotation-handoff.md` của api, không chép giá trị ra đây); khoá `*_ENABLED` của dispatch là cờ boolean, khoá `*_CRON` thì tắt bằng `-`.
+- **MST thuộc người dùng, không thuộc tenant** (sửa 05/11 theo user, record `docs/issues/weinvoice-company-ownership-by-user-2026-11-05.md`):
+  mọi bảng `winv_*` khoá theo `owner_id` = `USER_ID` đăng nhập (spec "một tài khoản quản lý nhiều MST"), không có chặn admin.
+  Nối MST ↔ `BIZ_KEY` là việc của WeCMS. Schema `weinvoice` đã tạo trên DB engine local 05/11 (144 NCC); `.env.local` bật WeInvoice,
+  `WECMS_WEINVOICE_DB_PASSWORD` user tự điền.
+- **Thêm / đổi mật khẩu MST = đăng nhập Thuế đồng bộ** (06/11, theo user; record `docs/issues/weinvoice-gdt-login-test-synchronous-2026-11-06.md`
+  ở cả api lẫn web): web → api `POST /companies` → engine `POST /internal/gdt/login-test` (`web/internal_api.py`,
+  `authenticate_auto` giải captcha `g_600x120`) → đúng mới mã hoá + lưu `CONNECTED`, trả `CompanyItem` ngay; sai → `WBE3027`
+  (câu của Thuế), không kiểm được → `WBE3028`; không lưu gì. Bỏ hàng đợi `LOGIN_TEST`. Engine đọc MST `CONNECTED` của
+  `weinvoice.winv_cmpn_infm` + giải mã mật khẩu (`weinvoice_bridge.py`, `WEINVOICE_SECRET_KEY` = `WECMS_WEINVOICE_SECRET_KEY`)
+  để tự thêm vào `companies` trước mỗi lượt đồng bộ; `.env` có `HDT_PASSWORD_<MST>` thì vẫn ưu tiên. 3 project độc lập, dùng chung DB.
+  **GDT khoá tài khoản khi sai mật khẩu nhiều lần** → thử bằng tài khoản giả, đừng thử sai với tài khoản thật.
 
 - Repo con có `CLAUDE.md` riêng, rất chặt: tạo record trước khi làm (`docs/features|bugs|issues/...-YYYY-MM-DD.md`), SQL để
   DBA chạy tay, dừng ở READY FOR MANUAL COMMIT, không tự commit/push. Record của đợt này:

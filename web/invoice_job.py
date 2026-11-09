@@ -67,6 +67,7 @@ import job_policy                                 # noqa: E402
 import mail_ingest                                # noqa: E402
 import mail_reader                                # noqa: E402
 import pdf_providers                              # noqa: E402
+import weinvoice_bridge                           # noqa: E402
 import xml_parser                                 # noqa: E402
 from api_client import GDTAuthError, GDTError     # noqa: E402
 from invoice_store import InvoiceStore            # noqa: E402
@@ -206,7 +207,11 @@ class TokenProvider:
             raise LoginError(f"Đã đăng nhập {self.logins} lần trong lượt này, dừng để tránh lặp captcha")
         password = gdt_password(self.company)
         if not password:
-            raise LoginError(f"Thiếu mật khẩu: đặt HDT_PASSWORD_{self.mst} (hoặc HDT_PASSWORD)")
+            # MST thêm từ WeInvoice: mật khẩu đã mã hoá trong weinvoice.winv_cmpn_infm
+            password = weinvoice_bridge.password_for(self.store, self.mst, self.company.get("gdt_username"))
+        if not password:
+            raise LoginError(f"Thiếu mật khẩu: đặt HDT_PASSWORD_{self.mst} (hoặc HDT_PASSWORD), "
+                             "hoặc kết nối MST trên WeInvoice")
         self.logins += 1
         self.stats["logins"] += 1
         res = api_client.authenticate_auto(self.company["gdt_username"], password)
@@ -567,8 +572,17 @@ def _sub_types() -> list:
     return api_client.expand_invoice_types([t.strip() for t in raw.split(",") if t.strip()])
 
 
+def _active_companies(store) -> list:
+    """Công ty của engine + MST người dùng đã kết nối trên WeInvoice (tự thêm vào `companies`)."""
+    try:
+        weinvoice_bridge.register_connected_companies(store)
+    except Exception:  # noqa: BLE001 — WeInvoice lỗi không được chặn job
+        log.exception("WeInvoice: không đăng ký được MST đã kết nối")
+    return store.active_companies()
+
+
 def _companies(store, only: str | None) -> list:
-    companies = store.active_companies()
+    companies = _active_companies(store)
     if only:
         companies = [c for c in companies if c["company_mst"] == only]
     if not companies:
@@ -967,7 +981,7 @@ def run_worker(store, task_type: str, out_dir: Path, *, per_company: int = WORKE
             run_id = run.ensure()
             if task_type == "pdf" and not run.stats:
                 _prepare_queues(store)          # NCC vừa có adapter → HĐ no_source quay lại
-            companies = {c["company_mst"]: c for c in store.active_companies()}
+            companies = {c["company_mst"]: c for c in _active_companies(store)}
             groups: dict = {}
             for task in claimed:
                 groups.setdefault(task["company_mst"], []).append(task)

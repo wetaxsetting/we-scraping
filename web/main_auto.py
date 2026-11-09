@@ -46,7 +46,7 @@ def split_range(start: date, end: date, days: int = job_policy.MAX_SPAN_DAYS) ->
 
 
 def _pick_company(store, mst: str | None) -> dict | None:
-    companies = store.active_companies()
+    companies = invoice_job._active_companies(store)
     if mst:
         return next((c for c in companies if c["company_mst"] == mst), None)
     return companies[0] if len(companies) == 1 else None
@@ -96,7 +96,7 @@ def main(argv=None) -> int:
     store = invoice_job.InvoiceStore(dsn)
     try:
         if args.all_companies:
-            companies = store.active_companies()
+            companies = invoice_job._active_companies(store)
             if not companies:
                 log.error("Chưa có công ty nào: chạy invoice_job.py add-company trước")
                 return 2
