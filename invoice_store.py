@@ -359,6 +359,34 @@ class InvoiceStore:
                 ON CONFLICT (invoice_id, task_type) DO NOTHING
             """, (task["id"],))
 
+    def set_gdt_pdf(self, invoice_id: int, pdf_path: str) -> None:
+        """PDF "bản của Thuế" (gdt_pdf.py) cho HĐ đã có XML."""
+        with self._tx() as cur:
+            cur.execute("UPDATE invoice_xml SET gdt_pdf_path=%s WHERE invoice_id=%s", (pdf_path, invoice_id))
+
+    def gdt_pdf_candidates(self, company_mst: str | None = None, limit: int | None = None,
+                           include_with_pdf: bool = False) -> list[dict]:
+        """HĐ có XML từ Thuế mà chưa có bản PDF của Thuế (mặc định: chỉ HĐ chưa có PDF gốc NCC)."""
+        sql = """
+            SELECT i.id, i.company_mst, i.nbmst, i.khmshdon, i.khhdon, i.shdon, i.ngay_lap
+              FROM invoices i
+              JOIN invoice_xml x ON x.invoice_id = i.id
+             WHERE x.gdt_pdf_path IS NULL
+        """
+        params: list = []
+        if not include_with_pdf:
+            sql += " AND NOT EXISTS (SELECT 1 FROM invoice_pdf p WHERE p.invoice_id = i.id)"
+        if company_mst:
+            sql += " AND i.company_mst = %s"
+            params.append(company_mst)
+        sql += " ORDER BY i.ngay_lap DESC NULLS LAST, i.id DESC"
+        if limit:
+            sql += " LIMIT %s"
+            params.append(limit)
+        with self._tx() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
     @classmethod
     def _save_xml(cls, cur, invoice_id: int, xml_path: str, sha256: str, parsed: dict,
                   partner: dict | None, nguon: str) -> None:

@@ -397,6 +397,12 @@ Code tách 2 hàm chính: `run_xml_step` (bước 2–4: GDT → XML, lệnh `xm
    Dữ liệu parse từ XML chỉ ghi DB, không ghi file JSON (2 file `output/hoa_don*.json` là của bản cũ 14/10).
 4. **XML:** tải ZIP → lưu `temp/` → lưu XML → ghi `invoices` / `invoice_xml` / `invoice_details`
    / `partners` trong 1 transaction → tạo task `pdf`.
+   **PDF của Thuế** (10/11): ZIP export-xml **không có PDF** (4.402/4.402 ZIP chỉ có `invoice.xml`, `invoice.html`,
+   `details.js`, 2 ảnh). `gdt_pdf.py` in `invoice.html` (trang xem HĐ của cổng Thuế, có QR + khung chữ ký) ra PDF bằng
+   Chromium chặn mạng → `output/pdf_gdt/...` + `invoice_xml.gdt_pdf_path`; lỗi chỉ ghi log. Bản tạm: backend chỉ liệt kê
+   (`pdf-gdt`, kind `pdf_gdt`) khi chưa có PDF gốc NCC / PDF tải lên; không tính là "có PDF". Dựng bù từ ZIP đã lưu:
+   `invoice_job.py gdt-pdf [--company MST] [--limit N] [--all]` (không gọi GDT; ZIP ở máy khác thì phải chạy ở máy đó).
+   Tắt: `INVOICE_GDT_PDF=0`.
 5. **Mail** (nếu cấu hình), xem mục 2.7: XML cho HĐ Thuế không có XML, PDF đính kèm.
    Chạy trước bước PDF để PDF đã có trong mail thì không phải gọi site NCC.
 6. **PDF:** chọn adapter theo `source_id` gắn tay (set-provider), nếu không có thì theo MSTTCGP

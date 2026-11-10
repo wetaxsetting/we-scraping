@@ -64,6 +64,7 @@ load_dotenv(ROOT / ".env")
 
 import api_client                                 # noqa: E402
 import gdt_login_guard                            # noqa: E402
+import gdt_pdf                                    # noqa: E402
 import job_policy                                 # noqa: E402
 import mail_ingest                                # noqa: E402
 import mail_reader                                # noqa: E402
@@ -354,6 +355,23 @@ def _do_xml_task(store, company, tokens, task, run_id, out_dir) -> None:
     store.complete_xml(task, run_id, path.relative_to(out_dir).as_posix(),
                        hashlib.sha256(xml_bytes).hexdigest(), parsed, partner)
     _log_xml(company["company_mst"], task, parsed, path.relative_to(out_dir).as_posix())
+    if gdt_pdf.enabled():
+        save_gdt_pdf(store, task, company["company_mst"], zip_bytes, out_dir)
+
+
+def save_gdt_pdf(store, task: dict, company_mst: str, zip_bytes: bytes, out_dir: Path) -> str | None:
+    """PDF "bản của Thuế" từ invoice.html trong ZIP → <out>/pdf_gdt/… + invoice_xml.gdt_pdf_path.
+    Bản tạm khi chưa có PDF gốc NCC. Lỗi chỉ ghi log, không làm hỏng task XML."""
+    try:
+        pdf = gdt_pdf.render(zip_bytes)
+    except gdt_pdf.GdtPdfError as e:
+        log.warning("[%s] Không dựng được PDF của Thuế cho %s: %s", company_mst, _label(task), e)
+        return None
+    path = invoice_path(out_dir, "pdf_gdt", task, company_mst, "pdf")
+    atomic_write(path, pdf)
+    rel = path.relative_to(out_dir).as_posix()
+    store.set_gdt_pdf(task["id"], rel)
+    return rel
 
 
 def _label(task: dict) -> str:
@@ -1128,6 +1146,28 @@ def cmd_unblock_login(store, args) -> int:
     return 0
 
 
+def cmd_gdt_pdf(store, args) -> int:
+    """Dựng bù PDF của Thuế từ ZIP đã lưu ở <out>/temp/ (không gọi GDT)."""
+    out_dir = output_dir()
+    rows = store.gdt_pdf_candidates(args.company, args.limit, include_with_pdf=args.all)
+    done = no_zip = failed = 0
+    for i, row in enumerate(rows, 1):
+        task = {**row, "id": row["id"]}
+        zp = invoice_path(out_dir, "temp", task, row["company_mst"], "zip")
+        if not zp.is_file():
+            no_zip += 1
+            continue
+        if save_gdt_pdf(store, task, row["company_mst"], zp.read_bytes(), out_dir):
+            done += 1
+        else:
+            failed += 1
+        if i % 200 == 0:
+            log.info("PDF của Thuế: %d/%d (dựng %d, thiếu ZIP %d, lỗi %d)", i, len(rows), done, no_zip, failed)
+    print(f"PDF của Thuế: dựng {done}, thiếu ZIP {no_zip} (ZIP ở máy khác / INVOICE_SAVE_ZIP=0), lỗi {failed} "
+          f"— trên {len(rows)} HĐ")
+    return 0 if not failed else 1
+
+
 def cmd_set_provider(store, args) -> int:
     n = store.set_provider_source(args.mst_tcgp, args.source_id, args.name)
     if args.source_id and args.source_id not in pdf_providers.available():
@@ -1229,6 +1269,11 @@ def main(argv=None) -> int:
     p.add_argument("--username")
     p.add_argument("--mst")
 
+    p = sub.add_parser("gdt-pdf", help="dựng bù PDF của Thuế (bản tạm) từ ZIP đã lưu, không gọi GDT")
+    p.add_argument("--company", help="chỉ 1 MST")
+    p.add_argument("--limit", type=int)
+    p.add_argument("--all", action="store_true", help="cả HĐ đã có PDF gốc NCC")
+
     p = sub.add_parser("set-provider", help="gắn adapter PDF cho 1 đơn vị cung cấp HĐĐT")
     p.add_argument("--mst-tcgp", required=True)
     p.add_argument("--source-id", required=True)
@@ -1248,7 +1293,7 @@ def main(argv=None) -> int:
             "init-db": cmd_init_db, "add-company": cmd_add_company, "tick": cmd_tick,
             "xml": cmd_xml, "pdf": cmd_pdf, "mail": cmd_mail, "sweep": cmd_sweep, "status": cmd_status, "requeue": cmd_requeue,
             "set-provider": cmd_set_provider, "sync-lists": cmd_sync_lists, "worker": cmd_worker,
-            "login-blocks": cmd_login_blocks, "unblock-login": cmd_unblock_login,
+            "login-blocks": cmd_login_blocks, "unblock-login": cmd_unblock_login, "gdt-pdf": cmd_gdt_pdf,
         }[args.cmd](store, args)
     finally:
         store.close()

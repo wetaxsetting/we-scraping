@@ -124,6 +124,9 @@ CREATE TABLE IF NOT EXISTS invoice_xml (
     fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS invoice_xml_tcgp ON invoice_xml (mst_tcgp);
+-- PDF "bản của Thuế" dựng từ invoice.html trong ZIP export-xml (gdt_pdf.py), đường dẫn tương đối như xml_path.
+-- Bản tạm: chỉ hiện khi chưa có PDF gốc NCC (invoice_pdf).
+ALTER TABLE invoice_xml ADD COLUMN IF NOT EXISTS gdt_pdf_path TEXT;
 
 CREATE TABLE IF NOT EXISTS invoice_pdf (
     invoice_id BIGINT PRIMARY KEY REFERENCES invoices ON DELETE CASCADE,
