@@ -37,6 +37,7 @@ except ImportError:  # python-dotenv không bắt buộc
     pass
 
 import api_client  # noqa: E402
+import gdt_login_guard  # noqa: E402
 
 log = logging.getLogger("internal_api")
 
@@ -60,10 +61,40 @@ def classify(result: dict) -> str:
     """ok / rejected (GDT từ chối tài khoản) / unavailable (captcha hết lượt, mạng, GDT lỗi)."""
     if result.get("ok"):
         return "ok"
+    if result.get("reason") == "captcha":
+        return "unavailable"
+    if result.get("reason") in ("bad_credentials", "locked"):
+        return "rejected"
     msg = result.get("message") or ""
     if _RETRY_EXHAUSTED in msg or int(result.get("attempts") or 0) >= MAX_RETRIES:
         return "unavailable"
     return "rejected"
+
+
+_STORE = None
+
+
+def _guard_store():
+    """Kết nối DB cho chặn đăng nhập (gdt_login_guard). Không có DATABASE_URL / DB lỗi → None:
+    vẫn cho người dùng thử (họ tự gõ mật khẩu), chỉ mất phần nhớ mật khẩu sai."""
+    global _STORE
+    if _STORE is None and os.getenv("DATABASE_URL"):
+        try:
+            from invoice_store import InvoiceStore
+            _STORE = InvoiceStore(os.environ["DATABASE_URL"])
+        except Exception:  # noqa: BLE001
+            log.exception("Không kết nối được DB cho chặn đăng nhập")
+    return _STORE
+
+
+def _guard(fn):
+    global _STORE
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001 — DB rớt: bỏ kết nối, lần sau mở lại
+        log.exception("gdt_login_guard lỗi")
+        _STORE = None
+        return None
 
 
 @app.get("/internal/health")
@@ -84,12 +115,26 @@ def login_test():
         return jsonify({"ok": False, "reason": "bad_request", "message": "Thiếu username / password"}), 400
 
     with _LOGIN_LOCK:
+        store = _guard_store()
+        # Đúng mật khẩu này Thuế đã từ chối → không gửi lại (Thuế khóa tài khoản sau 5 lần sai)
+        blocked = _guard(lambda: gdt_login_guard.check(store, username, password)) if store else None
+        if blocked:
+            log.info("login-test mst=%s user=%s → chặn (mật khẩu đã bị Thuế từ chối)", mst, username)
+            return jsonify({"ok": False, "reason": "rejected", "attempts": 0,
+                            "message": ("Mật khẩu này đã bị Cục Thuế từ chối"
+                                        + (" (tài khoản đang bị khóa)" if blocked["reason"] == "locked" else "")
+                                        + f": {blocked.get('message') or ''}. Không gửi lại để tránh khóa tài khoản.")})
         try:
             result = api_client.authenticate_auto(username, password, max_retries=MAX_RETRIES)
         except Exception as exc:  # noqa: BLE001 — mọi lỗi bất ngờ → unavailable, không lộ chi tiết
             log.exception("login-test mst=%s: lỗi bất ngờ", mst or username)
             return jsonify({"ok": False, "reason": "unavailable",
                             "message": f"{type(exc).__name__}", "attempts": 0})
+        if store and result.get("ok"):
+            _guard(lambda: gdt_login_guard.clear(store, username))
+        elif store and result.get("reason") in gdt_login_guard.REASONS:
+            _guard(lambda: gdt_login_guard.record(store, username, mst or None, result["reason"],
+                                                  result.get("message") or "", password))
     reason = classify(result)
     log.info("login-test mst=%s user=%s → %s (attempts=%s)", mst, username, reason, result.get("attempts"))
     return jsonify({"ok": reason == "ok", "reason": reason,

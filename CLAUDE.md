@@ -462,6 +462,16 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
 - Ký hiệu HĐ: ký tự đầu `C` = có mã CQT (MCCQT 34 ký tự), `K` = không mã; ký tự thứ 4 là `M` = máy tính tiền.
 
 ## 2.6 Adapter PDF (`pdf_providers/`)
+- **Thuế khóa tài khoản sau 5 lần sai mật khẩu** ("Tài khoản đã bị khoá vì đã nhập sai thông tin quá số lần quy định").
+  04–10/11 đã khóa 3 tài khoản (3600823561-U002, 3603512483 dùng cho 3603512483-001, 0318793907): `authenticate_auto` dừng
+  đúng sau 1 lần sai, nhưng **mỗi lượt sau lại thử đúng mật khẩu sai đó** (`tick` + `sync-lists` + `sweep`, worker XML mỗi 15 phút).
+  Sửa 10/11: `api_client.classify_login_failure` → chỉ **sai captcha** mới thử lại; sai mật khẩu / bị khóa ghi `gdt_login_blocks`
+  (`gdt_login_guard.py`, mỗi mật khẩu bị từ chối 1 dòng, vân tay HMAC, không lưu mật khẩu) → mọi lượt sau dùng đúng mật khẩu đó
+  **không gọi Thuế** (`TokenProvider._login`, `internal_api` login-test). Mật khẩu mới (sửa `.env` / cập nhật trên WeInvoice) thì
+  được thử; mật khẩu lấy từ WeInvoice bị từ chối → `winv_cmpn_infm.conn_stts='ERROR'` + câu của Thuế (màn Kết nối hiện lỗi).
+  Xem / bỏ chặn: `invoice_job.py login-blocks`, `unblock-login --mst X` (bỏ chặn **và bật lại** `companies.active`). 3 tài khoản
+  trên đã chặn + `active=false` 10/11 (máy khác dùng chung DB còn chạy code cũ, chỉ tôn trọng `active`) → mở khóa/đổi mật khẩu
+  xong thì `unblock-login`. Máy nào chạy job phải cập nhật code mới, nếu không vẫn thử lại mật khẩu sai.
 
 Các adapter dưới đây đã thử thật trên XML thật (10/2026):
 

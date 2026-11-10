@@ -168,18 +168,19 @@ def authenticate_auto(username: str, password: str,
             result = authenticate(username, password, ckey, text)
             if result["ok"]:
                 return {"ok": True, "token": result["token"], "message": "",
-                        "attempts": attempt, "confidence": conf}
+                        "attempts": attempt, "confidence": conf, "reason": "ok"}
 
-            msg = (result.get("message") or "").lower()
-            if any(kw in msg for kw in
-                   ("captcha", "mã xác nhận", "xác thực", "cvalue", "ckey", "wrong")):
+            reason = classify_login_failure(result.get("message") or "")
+            if reason == "captcha":
+                # Chỉ captcha sai mới thử lại (xin ảnh mới)
                 last_msg = result.get("message", "")
                 time.sleep(delay)
                 continue
 
-            # Sai user/pass hoặc lỗi khác → không retry
+            # Sai tài khoản/mật khẩu, tài khoản bị khóa, hoặc lỗi lạ → KHÔNG thử lại:
+            # Thuế khóa tài khoản sau 5 lần sai (đo 05/11/2026)
             return {"ok": False, "token": "", "message": result.get("message", ""),
-                    "attempts": attempt, "confidence": conf}
+                    "attempts": attempt, "confidence": conf, "reason": reason}
 
         except Exception as e:  # noqa: BLE001
             last_msg = f"{type(e).__name__}: {e}"
@@ -188,7 +189,29 @@ def authenticate_auto(username: str, password: str,
 
     return {"ok": False, "token": "",
             "message": f"Thử {max_retries} lần không được. Lỗi cuối: {last_msg}",
-            "attempts": max_retries, "confidence": last_conf}
+            "attempts": max_retries, "confidence": last_conf, "reason": "captcha"}
+
+
+# Câu GDT trả khi đăng nhập hỏng (đo thật 11/2026):
+#   "Tên đăng nhập hoặc mật khẩu không đúng"                               → bad_credentials
+#   "Tài khoản đã bị khoá vì đã nhập sai thông tin quá số lần quy định"   → locked
+_LOCKED_WORDS = ("bị khoá", "bị khóa", "khoá tài khoản", "khóa tài khoản", "locked")
+_CREDENTIAL_WORDS = ("mật khẩu", "tên đăng nhập", "tài khoản không tồn tại", "password", "username")
+
+
+def classify_login_failure(message: str) -> str:
+    """Câu báo lỗi đăng nhập GDT → 'locked' | 'bad_credentials' | 'captcha' | 'other'.
+
+    Xét khóa / sai mật khẩu TRƯỚC captcha: câu sai mật khẩu có thể chứa chữ "xác thực".
+    """
+    m = (message or "").lower()
+    if any(w in m for w in _LOCKED_WORDS):
+        return "locked"
+    if any(w in m for w in _CREDENTIAL_WORDS):
+        return "bad_credentials"
+    if any(w in m for w in _CAPTCHA_WORDS):
+        return "captcha"
+    return "other"
 
 
 _CAPTCHA_WORDS = ("captcha", "mã xác nhận", "xác thực", "cvalue", "ckey", "wrong")

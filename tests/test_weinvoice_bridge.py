@@ -72,6 +72,7 @@ def client(monkeypatch):
         return {"ok": False, "token": "", "message": "Tên đăng nhập hoặc mật khẩu không đúng", "attempts": 1}
 
     monkeypatch.setattr(internal_api.api_client, "authenticate_auto", fake_auth)
+    monkeypatch.setattr(internal_api, "_guard_store", lambda: None)   # không bao giờ chạm DB thật
     c = internal_api.app.test_client()
     c.calls = calls
     return c

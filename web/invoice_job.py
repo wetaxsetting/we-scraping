@@ -63,6 +63,7 @@ from dotenv import load_dotenv                    # noqa: E402
 load_dotenv(ROOT / ".env")
 
 import api_client                                 # noqa: E402
+import gdt_login_guard                            # noqa: E402
 import job_policy                                 # noqa: E402
 import mail_ingest                                # noqa: E402
 import mail_reader                                # noqa: E402
@@ -205,18 +206,30 @@ class TokenProvider:
     def _login(self) -> str:
         if self.logins >= self.MAX_LOGINS_PER_RUN:
             raise LoginError(f"Đã đăng nhập {self.logins} lần trong lượt này, dừng để tránh lặp captcha")
-        password = gdt_password(self.company)
+        username = self.company["gdt_username"]
+        password, source = gdt_password(self.company), "env"
         if not password:
             # MST thêm từ WeInvoice: mật khẩu đã mã hoá trong weinvoice.winv_cmpn_infm
-            password = weinvoice_bridge.password_for(self.store, self.mst, self.company.get("gdt_username"))
+            password, source = weinvoice_bridge.password_for(self.store, self.mst, username), "weinvoice"
         if not password:
             raise LoginError(f"Thiếu mật khẩu: đặt HDT_PASSWORD_{self.mst} (hoặc HDT_PASSWORD), "
                              "hoặc kết nối MST trên WeInvoice")
+        # Mật khẩu này đã bị Thuế từ chối → không thử lại (Thuế khóa tài khoản sau 5 lần sai)
+        blocked = gdt_login_guard.check(self.store, username, password)
+        if blocked:
+            self.stats["login_blocked"] += 1
+            raise LoginError(gdt_login_guard.describe(blocked))
         self.logins += 1
         self.stats["logins"] += 1
-        res = api_client.authenticate_auto(self.company["gdt_username"], password)
+        res = api_client.authenticate_auto(username, password)
         if not res["ok"]:
+            reason = res.get("reason")
+            if reason in gdt_login_guard.REASONS:
+                gdt_login_guard.record(self.store, username, self.mst, reason, res["message"], password)
+                if source == "weinvoice":
+                    weinvoice_bridge.mark_login_failed(self.store, self.mst, username, res["message"])
             raise LoginError(f"Đăng nhập GDT thất bại sau {res['attempts']} lần: {res['message']}")
+        gdt_login_guard.clear(self.store, username)
         token = res["token"]
         expires = api_client.jwt_expiry(token) or datetime.now(timezone.utc) + self.FALLBACK_TTL
         self.store.save_token(self.mst, token, expires)
@@ -1094,6 +1107,27 @@ def cmd_requeue(store, args) -> int:
     return 0
 
 
+def cmd_login_blocks(store, args) -> int:
+    rows = gdt_login_guard.list_blocks(store)
+    if not rows:
+        print("Không có tài khoản nào đang bị chặn đăng nhập.")
+        return 0
+    for r in rows:
+        print(f"{r['gdt_username']:<20} MST {r['company_mst'] or '-':<15} {r['reason']:<16} "
+              f"từ {gdt_login_guard.vn_time(r['blocked_at'])}, đã chặn {r['hits']} lần | {r['message']}")
+    print("Mở chặn (sau khi đã cập nhật / mở khóa ở Thuế): unblock-login --username X | --mst X")
+    return 0
+
+
+def cmd_unblock_login(store, args) -> int:
+    if not (args.username or args.mst):
+        log.error("Cần --username hoặc --mst")
+        return 2
+    done = gdt_login_guard.unblock(store, args.username, args.mst)
+    print(f"Đã bỏ chặn và bật lại: {', '.join(done) or '(không có gì)'}")
+    return 0
+
+
 def cmd_set_provider(store, args) -> int:
     n = store.set_provider_source(args.mst_tcgp, args.source_id, args.name)
     if args.source_id and args.source_id not in pdf_providers.available():
@@ -1190,6 +1224,11 @@ def main(argv=None) -> int:
     p.add_argument("--type", choices=["xml", "pdf"])
     p.add_argument("--mst-tcgp")
 
+    sub.add_parser("login-blocks", help="tài khoản GDT đang bị chặn đăng nhập (Thuế báo sai mật khẩu / khóa)")
+    p = sub.add_parser("unblock-login", help="bỏ chặn đăng nhập GDT (sau khi Thuế mở khóa mà không đổi mật khẩu)")
+    p.add_argument("--username")
+    p.add_argument("--mst")
+
     p = sub.add_parser("set-provider", help="gắn adapter PDF cho 1 đơn vị cung cấp HĐĐT")
     p.add_argument("--mst-tcgp", required=True)
     p.add_argument("--source-id", required=True)
@@ -1209,6 +1248,7 @@ def main(argv=None) -> int:
             "init-db": cmd_init_db, "add-company": cmd_add_company, "tick": cmd_tick,
             "xml": cmd_xml, "pdf": cmd_pdf, "mail": cmd_mail, "sweep": cmd_sweep, "status": cmd_status, "requeue": cmd_requeue,
             "set-provider": cmd_set_provider, "sync-lists": cmd_sync_lists, "worker": cmd_worker,
+            "login-blocks": cmd_login_blocks, "unblock-login": cmd_unblock_login,
         }[args.cmd](store, args)
     finally:
         store.close()

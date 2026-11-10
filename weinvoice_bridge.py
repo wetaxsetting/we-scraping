@@ -105,6 +105,27 @@ def register_connected_companies(store) -> int:
     return added
 
 
+def mark_login_failed(store, mst: str, gdt_username: str | None, message: str) -> int:
+    """Thuế từ chối mật khẩu WeInvoice của MST này → `conn_stts = 'ERROR'` + câu của Thuế.
+
+    Màn "Kết nối Cục Thuế" hiện lỗi để người dùng cập nhật mật khẩu; engine thôi dùng mật khẩu
+    đó (`register_connected_companies` / `password_for` chỉ đọc dòng CONNECTED).
+    """
+    from datetime import datetime, timezone
+    schema = app_schema()
+    with store._tx() as cur:
+        if not _table_exists(cur, schema):
+            return 0
+        dtm = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        cur.execute(f"""
+            UPDATE {schema}.winv_cmpn_infm
+               SET conn_stts = 'ERROR', conn_msg = %s, conn_chk_dtm = %s, mod_id = 'engine', mod_dtm = %s
+             WHERE cmpn_mst = %s AND COALESCE(gdt_user_id, cmpn_mst) = %s
+               AND conn_stts = 'CONNECTED' AND del_yn = 'N'
+        """, ((message or "Cục Thuế từ chối mật khẩu")[:500], dtm, dtm, mst, gdt_username or mst))
+        return cur.rowcount
+
+
 def password_for(store, mst: str, gdt_username: str | None = None) -> str | None:
     """Mật khẩu GDT mới nhất của `mst` trong WeInvoice (ưu tiên đúng tài khoản `gdt_username`)."""
     schema = app_schema()

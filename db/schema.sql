@@ -250,3 +250,17 @@ CREATE TABLE IF NOT EXISTS job_run_companies (
     PRIMARY KEY (run_id, company_mst)
 );
 CREATE INDEX IF NOT EXISTS job_run_companies_mst ON job_run_companies (company_mst, started_at DESC);
+
+-- Tài khoản GDT bị Thuế từ chối (sai mật khẩu / bị khóa): không đăng nhập lại bằng đúng mật khẩu đó
+-- (gdt_login_guard.py, 10/11/2026). Thuế khóa tài khoản sau 5 lần sai.
+CREATE TABLE IF NOT EXISTS gdt_login_blocks (
+    gdt_username   TEXT NOT NULL,
+    company_mst    TEXT,
+    reason         TEXT NOT NULL CHECK (reason IN ('bad_credentials', 'locked')),
+    message        TEXT,
+    pw_fingerprint TEXT NOT NULL,            -- HMAC-SHA256(khóa, tài khoản + mật khẩu); không lưu mật khẩu
+    hits           INT NOT NULL DEFAULT 0,
+    blocked_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (gdt_username, pw_fingerprint)      -- mỗi mật khẩu bị từ chối 1 dòng
+);

@@ -241,6 +241,9 @@ def _login_counter(monkeypatch):
     monkeypatch.setattr(invoice_job.api_client, "authenticate_auto", fake_auth)
     monkeypatch.setattr(invoice_job.api_client, "jwt_expiry", lambda tok: None)
     monkeypatch.setenv("HDT_PASSWORD_" + A, "x")
+    # chặn đăng nhập (gdt_login_guard) có test riêng; store giả ở đây không có DB
+    monkeypatch.setattr(invoice_job.gdt_login_guard, "check", lambda store, user, pw: None)
+    monkeypatch.setattr(invoice_job.gdt_login_guard, "clear", lambda store, user: 0)
     return calls
 
 
