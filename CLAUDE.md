@@ -434,9 +434,10 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
   `release_tasks(delay_minutes=…)` — trả ngay thì mẻ sau nhận lại đúng task đó và quay vòng vô ích.
 - `job_runs` của worker (`worker-xml`/`worker-pdf`): 1 dòng mỗi **đợt việc**, mở khi nhận được việc,
   đóng khi hộp chờ rỗng hoặc quá 1 giờ; worker ngồi chờ không sinh dòng nào.
-- Lịch: `scripts\register_queue_tasks.ps1 -RunWhenLoggedOff` tạo 4 task (Sync Lists 06/14/22h,
-  Mail mỗi 30 phút, Worker XML/PDF khởi động cùng máy, không giới hạn thời gian, chết thì bật lại sau
-  1 phút). Đang chạy `tick` thì gỡ task đó đi cho khỏi trùng (chạy cùng lúc không hỏng dữ liệu).
+- Lịch: `scripts\register_queue_tasks.ps1 -RunWhenLoggedOff` tạo 6 task (Sync Lists 06/14/22h,
+  Mail mỗi 30 phút, Worker XML/PDF, và từ 10/11 **WeInvoice API** `web/internal_api.py` (log
+  `output/logs/internal_api_<yyyy-mm>.log`) + **WeInvoice Worker** `web/weinvoice_worker.py`; 4 task chạy mãi khởi động
+  cùng máy, không giới hạn thời gian, chết thì bật lại sau 1 phút). Máy không chạy WeInvoice: thêm `-NoWeInvoice`. Đang chạy `tick` thì gỡ task đó đi cho khỏi trùng (chạy cùng lúc không hỏng dữ liệu).
 - **Chưa có**: giới hạn số request đồng thời mỗi tài khoản GDT khi chạy nhiều worker XML (hiện chỉ
   nhịp 0,7 s/HĐ mỗi worker) — chạy 1 worker XML cho tới khi đo được ngưỡng của GDT; rải lịch
   `sync-lists` theo MST khi lên vài chục công ty.

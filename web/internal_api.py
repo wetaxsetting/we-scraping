@@ -97,8 +97,29 @@ def login_test():
                     "attempts": result.get("attempts")})
 
 
+def _setup_logging() -> None:
+    """Console (nếu có) + file `<INVOICE_OUTPUT_DIR>/logs/internal_api_<yyyy-mm>.log`.
+
+    Task Scheduler chạy bằng pythonw: không có console, nên không có file log thì mất hết dấu vết.
+    """
+    from datetime import date
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    out = Path(os.getenv("INVOICE_OUTPUT_DIR") or ROOT / "output")
+    log_dir = out / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handlers: list[logging.Handler] = [
+        logging.FileHandler(log_dir / f"internal_api_{date.today():%Y-%m}.log", encoding="utf-8")]
+    if sys.stderr is not None:          # pythonw không có console
+        handlers.append(logging.StreamHandler())
+    for h in handlers:
+        h.setFormatter(fmt)
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.handlers[:] = handlers
+
+
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    _setup_logging()
     if not os.getenv("SCRAPING_INTERNAL_API_KEY", "").strip():
         log.warning("Chưa đặt SCRAPING_INTERNAL_API_KEY: mọi request sẽ bị từ chối (503)")
     host = os.getenv("SCRAPING_INTERNAL_HOST", "127.0.0.1")

@@ -3,15 +3,23 @@
   Dang ky Task Scheduler cho mo hinh hang doi (thay cho 1 task "tick" duy nhat).
 
 .DESCRIPTION
-  Tao 4 task, ten bat dau bang -Prefix (mac dinh "Invoice"):
-    <Prefix> Sync Lists   invoice_job.py sync-lists      06:00, 14:00, 22:00 (doi bang -ListTimes)
-    <Prefix> Mail         invoice_job.py mail             moi -MailEveryMinutes phut (mac dinh 30)
-    <Prefix> Worker XML   invoice_job.py worker --type xml  chay mai, tu khoi dong lai khi chet
-    <Prefix> Worker PDF   invoice_job.py worker --type pdf  chay mai, tu khoi dong lai khi chet
+  Tao 6 task, ten bat dau bang -Prefix (mac dinh "Invoice"):
+    <Prefix> Sync Lists        invoice_job.py sync-lists        06:00, 14:00, 22:00 (doi bang -ListTimes)
+    <Prefix> Mail              invoice_job.py mail              moi -MailEveryMinutes phut (mac dinh 30)
+    <Prefix> Worker XML        invoice_job.py worker --type xml chay mai, tu khoi dong lai khi chet
+    <Prefix> Worker PDF        invoice_job.py worker --type pdf chay mai, tu khoi dong lai khi chet
+    <Prefix> WeInvoice API     internal_api.py                  chay mai: backend WeInvoice goi de dang nhap
+                                                                thu GDT khi them MST (cong SCRAPING_INTERNAL_PORT)
+    <Prefix> WeInvoice Worker  weinvoice_worker.py              chay mai: yeu cau SYNC / FETCH_XML / FETCH_PDF /
+                                                                IMPORT / TEST_DATA tu weinvoice.winv_engn_rqst
 
-  Worker khong co gioi han thoi gian chay, khoi dong cung may (-RunWhenLoggedOff) hoac khi
+  2 task WeInvoice can .env: SCRAPING_INTERNAL_API_KEY (= WECMS_WEINVOICE_SCRAPING_API_KEY cua backend),
+  WEINVOICE_SECRET_KEY (= WECMS_WEINVOICE_SECRET_KEY), WEINVOICE_STORAGE_ROOT (= WECMS_WEINVOICE_STORAGE_ROOT).
+  May khong chay WeInvoice: them -NoWeInvoice.
+
+  Worker / API khong co gioi han thoi gian chay, khoi dong cung may (-RunWhenLoggedOff) hoac khi
   dang nhap (mac dinh), va duoc Task Scheduler bat lai sau 1 phut neu thoat voi loi.
-  Sau khi dang ky, script bat 2 worker ngay (bo qua bang -NoStart).
+  Sau khi dang ky, script bat ngay cac task chay mai (bo qua bang -NoStart).
 
   Tren may chu BAT BUOC dung -RunWhenLoggedOff (LogonType S4U): mac dinh task chi chay khi
   user dang dang nhap.
@@ -22,6 +30,7 @@
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\register_queue_tasks.ps1 -RunWhenLoggedOff
   powershell -ExecutionPolicy Bypass -File scripts\register_queue_tasks.ps1 -RunWhenLoggedOff -ListTimes 06:00,14:00,22:00 -MailEveryMinutes 60
+  powershell -ExecutionPolicy Bypass -File scripts\register_queue_tasks.ps1 -RunWhenLoggedOff -NoWeInvoice
   powershell -ExecutionPolicy Bypass -File scripts\register_queue_tasks.ps1 -Unregister
 #>
 param(
@@ -31,6 +40,7 @@ param(
     [string]$Python = "",
     [switch]$RunWhenLoggedOff,
     [switch]$NoStart,
+    [switch]$NoWeInvoice,
     [switch]$Unregister
 )
 
@@ -39,6 +49,7 @@ $ErrorActionPreference = "Stop"
 $names = @{
     Sync = "$Prefix Sync Lists"; Mail = "$Prefix Mail"
     Xml  = "$Prefix Worker XML"; Pdf  = "$Prefix Worker PDF"
+    Api  = "$Prefix WeInvoice API"; Winv = "$Prefix WeInvoice Worker"
 }
 
 if ($Unregister) {
@@ -75,6 +86,12 @@ if (-not $Python) {
 
 function New-JobAction([string]$cmd) {
     New-ScheduledTaskAction -Execute $Python -Argument "`"$job`" $cmd" -WorkingDirectory $root
+}
+
+function New-ScriptAction([string]$script) {
+    $path = Join-Path $root "web\$script"
+    if (-not (Test-Path $path)) { throw "Khong thay $path" }
+    New-ScheduledTaskAction -Execute $Python -Argument "-X utf8 `"$path`"" -WorkingDirectory $root
 }
 
 $principal = $null
@@ -116,10 +133,19 @@ Register-JobTask $names.Xml (New-JobAction "worker --type xml") $workerTrigger $
 Register-JobTask $names.Pdf (New-JobAction "worker --type pdf") $workerTrigger $workerSettings `
     "Rut hop cho PDF lien tuc (site NCC), xoay vong qua cac cong ty"
 
+# 5-6. WeInvoice: API noi bo (dang nhap thu GDT) + worker yeu cau cua backend, cung kieu chay mai
+if (-not $NoWeInvoice) {
+    Register-JobTask $names.Api (New-ScriptAction "internal_api.py") $workerTrigger $workerSettings `
+        "API noi bo cho WeInvoice backend: dang nhap thu Cuc Thue khi them MST (log: output\logs\internal_api_*.log)"
+    Register-JobTask $names.Winv (New-ScriptAction "weinvoice_worker.py") $workerTrigger $workerSettings `
+        "Xu ly yeu cau WeInvoice: dong bo, lay XML/PDF, nhap file tai len, bo du lieu test"
+}
+
 Write-Output "Da dang ky:"
 Write-Output "  $($names.Sync): $($ListTimes -join ', ')"
 Write-Output "  $($names.Mail): moi $MailEveryMinutes phut"
 Write-Output "  $($names.Xml), $($names.Pdf): chay mai"
+if (-not $NoWeInvoice) { Write-Output "  $($names.Api), $($names.Winv): chay mai" }
 Write-Output "Python: $Python"
 if ($RunWhenLoggedOff) {
     Write-Output "Che do: chay ca khi da dang xuat (S4U), worker khoi dong cung may"
@@ -130,5 +156,9 @@ if ($RunWhenLoggedOff) {
 if (-not $NoStart) {
     Start-ScheduledTask -TaskName $names.Xml
     Start-ScheduledTask -TaskName $names.Pdf
-    Write-Output "Da bat 2 worker. Lay danh sach ngay: Start-ScheduledTask -TaskName '$($names.Sync)'"
+    if (-not $NoWeInvoice) {
+        Start-ScheduledTask -TaskName $names.Api
+        Start-ScheduledTask -TaskName $names.Winv
+    }
+    Write-Output "Da bat cac task chay mai. Lay danh sach ngay: Start-ScheduledTask -TaskName '$($names.Sync)'"
 }
