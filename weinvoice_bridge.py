@@ -86,6 +86,20 @@ def register_connected_companies(store) -> int:
             ON CONFLICT DO NOTHING
         """)
         added = cur.rowcount
+        # MST trước đó chỉ có HĐ tải lên (dòng tạm `#upload:<MST>`, không hoạt động, do
+        # web/weinvoice_worker.py tạo) nay đã CONNECTED → dùng tài khoản thật, bật cho job.
+        cur.execute(f"""
+            UPDATE companies co
+               SET gdt_username = src.u, name = COALESCE(co.name, src.n), active = true
+              FROM (SELECT DISTINCT ON (c.cmpn_mst) c.cmpn_mst AS mst,
+                           COALESCE(c.gdt_user_id, c.cmpn_mst) AS u, c.cmpn_nm AS n
+                      FROM {schema}.winv_cmpn_infm c
+                     WHERE c.conn_stts = 'CONNECTED' AND c.del_yn = 'N' AND c.gdt_pw_enc IS NOT NULL
+                     ORDER BY c.cmpn_mst, COALESCE(c.mod_dtm, c.reg_dtm) DESC) src
+             WHERE co.company_mst = src.mst AND co.gdt_username LIKE '#upload:%%'
+               AND NOT EXISTS (SELECT 1 FROM companies o WHERE o.gdt_username = src.u)
+        """)
+        added += cur.rowcount
     if added:
         log.info("WeInvoice: thêm %d MST đã kết nối vào companies", added)
     return added

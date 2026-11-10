@@ -311,6 +311,8 @@ python -X utf8 web/invoice_job.py requeue --status dead|no_source [--type xml|pd
 python -X utf8 web/invoice_job.py set-provider --mst-tcgp X --source-id Y
 # API nội bộ cho WeInvoice backend (06/11): đăng nhập thử GDT khi user thêm MST — chạy thường trực cạnh job
 python -X utf8 web/internal_api.py    # POST /internal/gdt/login-test, X-Api-Key = SCRAPING_INTERNAL_API_KEY, mặc định 127.0.0.1:8090
+# Worker yêu cầu WeInvoice (09/11): SYNC / FETCH_XML / FETCH_PDF / IMPORT / TEST_DATA từ weinvoice.winv_engn_rqst — chạy thường trực
+python -X utf8 web/weinvoice_worker.py [--once]   # cần WEINVOICE_STORAGE_ROOT = WECMS_WEINVOICE_STORAGE_ROOT của backend
 
 # Tải PDF cho XML có sẵn trên đĩa (không cần DB, không gọi GDT)
 python -X utf8 web/fetch_pdf.py --company 1201496252 [--dry-run] [--mst-tcgp X] [--seller MST] [--limit N] [--force]
@@ -885,9 +887,13 @@ rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API ch
   (header `X-Api-Key`). BE nối **thẳng DB của engine** bằng pool riêng (`WeInvoiceDb`, không phải bean `DataSource` — tạo bean
   thì auto-config của Spring lùi lại và các repo JDBC cũ trỏ nhầm DB). Bảng engine chỉ đọc; bảng WeInvoice ở schema `weinvoice`
   (`src/main/resources/db/weinvoice/V1__winv_schema.sql`, 11 bảng) — **chưa chạy trên DB nào**.
-- Việc của engine còn thiếu: worker đọc `weinvoice.winv_engn_rqst` (LOGIN_TEST, SYNC, FETCH_XML, FETCH_PDF, IMPORT, TEST_DATA),
-  lấy mật khẩu GDT từ `winv_cmpn_infm` (AES-256-GCM, `WECMS_WEINVOICE_SECRET_KEY`) thay cho `.env`, ghi `winv_sync_cvrg`.
-  Hợp đồng chi tiết ở `README.md` §"Engine contract" của module.
+- **Worker yêu cầu** (09/11, `web/weinvoice_worker.py`, record `docs/issues/weinvoice-engine-request-worker-2026-11-09.md` của api):
+  SYNC theo tháng (danh sách + XML, ghi `winv_sync_cvrg`), FETCH_XML / FETCH_PDF chạy ngay (mã/link nhập tay thắng mã đoán từ XML),
+  IMPORT (lô `winv_upld_*` hoặc 1 XML của 1 HĐ; NEW/MERGED/DUPLICATE/FOREIGN/PDF_PENDING/ERROR), TEST_DATA (thư mục TestData).
+  HĐ tạo từ file tải lên: `list_raw.nguon = upload|test_data`, XML `invoice_details.nguon = 'xml_upload'` (CHECK nới trong
+  `db/schema.sql`, áp bằng `init-db`), PDF `source_id = upload|test_data`. MST chưa có tài khoản GDT → dòng `companies` tạm
+  `gdt_username='#upload:<MST>'`, `active=false`; khi CONNECTED, `weinvoice_bridge` đổi sang tài khoản thật. Hợp đồng: `README.md`
+  §"Engine contract" của module.
 - Build trên máy này: Gradle cần JVM 17+ mà máy mặc định Java 11 →
   `JAVA_HOME=$HOME/.gradle/jdks/eclipse_adoptium-21-amd64-windows.2 ./gradlew test --offline`. Bộ test đầy đủ có **13 lỗi sẵn
   có** (`ActuatorEndpointSecurityTest`, `SchedulerConfigurationContractTest`, `OperatingHoursZoneConsistencyTest`) vì thiếu
