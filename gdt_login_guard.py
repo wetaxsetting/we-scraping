@@ -146,4 +146,4 @@ def describe(row: dict) -> str:
     what = "tài khoản bị Thuế khóa" if row["reason"] == "locked" else "Thuế báo sai tên đăng nhập/mật khẩu"
     when = vn_time(row.get("blocked_at"))
     return (f"Không đăng nhập: {what} lúc {when} ({row.get('message') or ''}). "
-            "Cập nhật mật khẩu (HDT_PASSWORD_<MST> trong .env hoặc trên WeInvoice) để thử lại")
+            "Cập nhật mật khẩu (trên WeInvoice, hoặc HDT_PASSWORD_<MST> trong .env) để thử lại")

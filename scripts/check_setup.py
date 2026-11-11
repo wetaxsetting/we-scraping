@@ -142,11 +142,13 @@ else:
     for k in ENV_REQUIRED:
         (ok if os.getenv(k) else lambda m: bad(m, "dien vao .env"))(
             f"{k} {'da dat' if os.getenv(k) else 'CHUA dat'}")
-    pw_keys = [k for k in os.environ if k.startswith("HDT_PASSWORD")]
+    pw_keys = [k for k in os.environ if k.startswith("HDT_PASSWORD_")]
     if pw_keys:
         ok(f"mat khau GDT: {len(pw_keys)} khoa ({', '.join(sorted(pw_keys))})")
     else:
-        bad("khong co HDT_PASSWORD_<MST>", "them vao .env cho tung MST cong ty")
+        print("  -    khong co HDT_PASSWORD_<MST> (MST ket noi tren WeInvoice dung mat khau trong DB)")
+    if os.getenv("HDT_PASSWORD"):
+        bad("HDT_PASSWORD chung van con trong .env", "xoa dong nay: job khong dung nua (tung lam Thue khoa tai khoan)")
     for k in ENV_OPTIONAL:
         print(f"  {'-' if not os.getenv(k) else 'OK   '} {k}"
               f" {'(khong dat, dung mac dinh)' if not os.getenv(k) else 'da dat'}")

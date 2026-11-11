@@ -20,8 +20,10 @@ Lệnh:
 
 Cấu hình (biến môi trường hoặc file .env ở thư mục gốc project):
     DATABASE_URL          postgresql://user:pass@host:5432/dbname
-    HDT_PASSWORD_<MST>    mật khẩu GDT từng công ty, vd HDT_PASSWORD_1201496252
-    HDT_PASSWORD          dùng khi chỉ có 1 công ty
+    HDT_PASSWORD_<MST>    mật khẩu GDT của công ty CHƯA có trên WeInvoice, vd HDT_PASSWORD_1201496252.
+                          MST đã kết nối trên WeInvoice dùng mật khẩu lưu (mã hoá) trong DB, xét trước.
+                          Không còn HDT_PASSWORD chung: nó từng bị gửi cho mọi MST thiếu khóa riêng
+                          và làm Thuế khóa tài khoản (11/11/2026).
     INVOICE_OUTPUT_DIR    mặc định <root>/output
     INVOICE_TYPES         mặc định "mua-all,ban-all"
     INVOICE_SAVE_ZIP      mặc định 1: lưu ZIP gốc từ GDT vào <output>/temp/ (cùng cấu trúc xml/)
@@ -152,8 +154,29 @@ def classify(exc: Exception) -> str:
 
 
 def gdt_password(company: dict) -> str:
+    """Mật khẩu trong .env của đúng MST này (HDT_PASSWORD_<MST>). Không lùi về khóa chung."""
     key = "HDT_PASSWORD_" + re.sub(r"[^0-9A-Za-z]", "_", company["company_mst"])
-    return os.getenv(key) or os.getenv("HDT_PASSWORD", "")
+    return os.getenv(key, "")
+
+
+def resolve_password(store, company: dict) -> tuple[str, str]:
+    """(mật khẩu, nguồn). Thứ tự: WeInvoice (DB, mã hoá) → HDT_PASSWORD_<MST> (.env).
+
+    DB đứng trước: user đổi mật khẩu trên WeInvoice thì phải có hiệu lực ngay, không bị
+    một dòng .env cũ đè. Không có ở đâu → LoginError, KHÔNG thử mật khẩu nào khác.
+    """
+    mst, username = company["company_mst"], company["gdt_username"]
+    try:
+        password = weinvoice_bridge.password_for(store, mst, username)
+    except ValueError as exc:     # có mật khẩu WeInvoice nhưng giải mã không được (sai khoá)
+        raise LoginError(f"Không đăng nhập: {exc}") from exc
+    if password:
+        return password, "weinvoice"
+    password = gdt_password(company)
+    if password:
+        return password, "env"
+    raise LoginError(f"Thiếu mật khẩu: kết nối MST {mst} trên WeInvoice "
+                     f"hoặc đặt HDT_PASSWORD_{re.sub(r'[^0-9A-Za-z]', '_', mst)} trong .env")
 
 
 # ---------------------------------------------------------------------------
@@ -208,13 +231,7 @@ class TokenProvider:
         if self.logins >= self.MAX_LOGINS_PER_RUN:
             raise LoginError(f"Đã đăng nhập {self.logins} lần trong lượt này, dừng để tránh lặp captcha")
         username = self.company["gdt_username"]
-        password, source = gdt_password(self.company), "env"
-        if not password:
-            # MST thêm từ WeInvoice: mật khẩu đã mã hoá trong weinvoice.winv_cmpn_infm
-            password, source = weinvoice_bridge.password_for(self.store, self.mst, username), "weinvoice"
-        if not password:
-            raise LoginError(f"Thiếu mật khẩu: đặt HDT_PASSWORD_{self.mst} (hoặc HDT_PASSWORD), "
-                             "hoặc kết nối MST trên WeInvoice")
+        password, source = resolve_password(self.store, self.company)
         # Mật khẩu này đã bị Thuế từ chối → không thử lại (Thuế khóa tài khoản sau 5 lần sai)
         blocked = gdt_login_guard.check(self.store, username, password)
         if blocked:

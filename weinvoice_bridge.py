@@ -3,7 +3,8 @@
 WeInvoice (we-scraping-api) lưu MST của người dùng + mật khẩu Cục Thuế đã mã hoá ở
 `weinvoice.winv_cmpn_infm`. Engine:
   - đưa các MST đã CONNECTED vào bảng `companies` của mình để job tự lấy hoá đơn;
-  - giải mã mật khẩu khi đăng nhập GDT cho MST không có `HDT_PASSWORD_<MST>` trong `.env`.
+  - giải mã mật khẩu khi đăng nhập GDT. Mật khẩu WeInvoice xét TRƯỚC `HDT_PASSWORD_<MST>` trong `.env`
+    (xem `invoice_job.resolve_password`).
 
 Định dạng mã hoá (khớp `WeInvoiceSecretCipher` bên Java):
     "v1:" + base64(iv[12] || AES-256-GCM(ciphertext || tag[16]))

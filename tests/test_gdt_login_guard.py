@@ -171,6 +171,46 @@ def test_weinvoice_password_rejected_marks_connection_error(monkeypatch, guard):
     assert guard["recorded"][0][2] == "locked" and guard["marked"] == ["3600823561"]
 
 
+def test_weinvoice_password_wins_over_env(monkeypatch, guard):
+    good = {"ok": True, "token": "jwt", "message": "", "attempts": 1, "reason": "ok"}
+    assert _provider(monkeypatch, guard, good, env_pw="cu", winv_pw="moi").get() == "jwt"
+    assert guard["auth"] == ["moi"]
+
+
+def test_env_password_used_when_not_on_weinvoice(monkeypatch, guard):
+    good = {"ok": True, "token": "jwt", "message": "", "attempts": 1, "reason": "ok"}
+    assert _provider(monkeypatch, guard, good, env_pw="env", winv_pw=None).get() == "jwt"
+    assert guard["auth"] == ["env"]
+
+
+def test_no_password_anywhere_never_calls_gdt(monkeypatch, guard):
+    good = {"ok": True, "token": "jwt", "message": "", "attempts": 1, "reason": "ok"}
+    with pytest.raises(invoice_job.LoginError, match="Thiếu mật khẩu"):
+        _provider(monkeypatch, guard, good, env_pw=None, winv_pw=None).get()
+    assert guard["auth"] == []
+
+
+def test_undecryptable_weinvoice_password_does_not_fall_back(monkeypatch, guard):
+    good = {"ok": True, "token": "jwt", "message": "", "attempts": 1, "reason": "ok"}
+    tp = _provider(monkeypatch, guard, good, env_pw="env")
+
+    def bad_key(store, mst, u):
+        raise ValueError("không giải mã được mật khẩu WeInvoice (sai WEINVOICE_SECRET_KEY?)")
+    monkeypatch.setattr(invoice_job.weinvoice_bridge, "password_for", bad_key)
+    with pytest.raises(invoice_job.LoginError, match="WEINVOICE_SECRET_KEY"):
+        tp.get()
+    assert guard["auth"] == []
+
+
+def test_generic_hdt_password_is_never_used(monkeypatch):
+    """HDT_PASSWORD chung từng bị gửi cho MST thiếu khóa riêng → Thuế khóa tài khoản."""
+    monkeypatch.setenv("HDT_PASSWORD", "mat-khau-cong-ty-khac")
+    monkeypatch.delenv("HDT_PASSWORD_3603512483_001", raising=False)
+    assert invoice_job.gdt_password({"company_mst": "3603512483-001"}) == ""
+    monkeypatch.setenv("HDT_PASSWORD_3603512483_001", "rieng")
+    assert invoice_job.gdt_password({"company_mst": "3603512483-001"}) == "rieng"
+
+
 # --- vân tay mật khẩu -------------------------------------------------------
 
 def test_fingerprint_depends_on_user_and_password(monkeypatch):

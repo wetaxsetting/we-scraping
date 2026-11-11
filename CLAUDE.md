@@ -894,7 +894,10 @@ rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API ch
   `authenticate_auto` giải captcha `g_600x120`) → đúng mới mã hoá + lưu `CONNECTED`, trả `CompanyItem` ngay; sai → `WBE3027`
   (câu của Thuế), không kiểm được → `WBE3028`; không lưu gì. Bỏ hàng đợi `LOGIN_TEST`. Engine đọc MST `CONNECTED` của
   `weinvoice.winv_cmpn_infm` + giải mã mật khẩu (`weinvoice_bridge.py`, `WEINVOICE_SECRET_KEY` = `WECMS_WEINVOICE_SECRET_KEY`)
-  để tự thêm vào `companies` trước mỗi lượt đồng bộ; `.env` có `HDT_PASSWORD_<MST>` thì vẫn ưu tiên. 3 project độc lập, dùng chung DB.
+  để tự thêm vào `companies` trước mỗi lượt đồng bộ. **Thứ tự mật khẩu (11/11): WeInvoice (DB) → `HDT_PASSWORD_<MST>` → không có thì
+  báo thiếu, không gọi Thuế** (`invoice_job.resolve_password`). Đã bỏ `HDT_PASSWORD` chung: nó bị gửi cho mọi MST thiếu khóa riêng
+  (kể cả `3603512483-001` vì khóa tìm là `HDT_PASSWORD_3603512483_001`) — vân tay chặn của 3700860461, 3600823561-U002, 3603512483
+  đều là mật khẩu chung đó. Giải mã WeInvoice lỗi (sai khóa) → dừng, không lùi về `.env`. 3 project độc lập, dùng chung DB.
   **GDT khoá tài khoản khi sai mật khẩu nhiều lần** → thử bằng tài khoản giả, đừng thử sai với tài khoản thật.
 
 - Repo con có `CLAUDE.md` riêng, rất chặt: tạo record trước khi làm (`docs/features|bugs|issues/...-YYYY-MM-DD.md`), SQL để

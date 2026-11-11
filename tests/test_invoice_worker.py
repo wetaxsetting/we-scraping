@@ -244,6 +244,7 @@ def _login_counter(monkeypatch):
     # chặn đăng nhập (gdt_login_guard) có test riêng; store giả ở đây không có DB
     monkeypatch.setattr(invoice_job.gdt_login_guard, "check", lambda store, user, pw: None)
     monkeypatch.setattr(invoice_job.gdt_login_guard, "clear", lambda store, user: 0)
+    monkeypatch.setattr(invoice_job.weinvoice_bridge, "password_for", lambda store, mst, user: None)
     return calls
 
 
