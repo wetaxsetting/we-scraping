@@ -305,7 +305,7 @@ def _invoice(store, invoice_id: int) -> dict | None:
     with store._tx() as cur:
         cur.execute("""
             SELECT i.*, (x.invoice_id IS NOT NULL) AS has_xml, (p.invoice_id IS NOT NULL) AS has_pdf,
-                   p.source_id AS pdf_source
+                   p.source_id AS pdf_source, p.pdf_path
               FROM invoices i
               LEFT JOIN invoice_xml x ON x.invoice_id = i.id
               LEFT JOIN invoice_pdf p ON p.invoice_id = i.id
@@ -382,7 +382,9 @@ _PRIORITY = ("NEW", "MERGED", "DUPLICATE", "PDF_PENDING", "FOREIGN", "ERROR")
 class Importer:
     """
     Quy tắc gộp (UI Spec 3.2): khóa = MST bán + mẫu + ký hiệu + số. HĐ chưa có → tạo mới (NEW);
-    có mà chưa có XML → gắn XML (MERGED); đã có XML → DUPLICATE (XML của Thuế là bản chuẩn).
+    có mà chưa có XML → gắn XML (MERGED); đã có XML → DUPLICATE (XML của Thuế là bản chuẩn) — trừ khi
+    file XML đó không có trên máy này (engine máy khác tải về): ghi file vào đúng đường dẫn đã lưu, không
+    parse lại (MERGED "Bổ sung file …"). PDF cũng vậy.
     MST bán/mua không thuộc tài khoản → FOREIGN. PDF: ghép theo XML cùng lô hoặc theo chữ trong
     PDF; chưa có HĐ → PDF_PENDING.
     """
@@ -399,6 +401,10 @@ class Importer:
         self.mi.managed = {m.split("-")[0] for m in self.managed}
 
     # -- XML ---------------------------------------------------------------
+    def _missing_here(self, rel: str | None) -> bool:
+        """DB có đường dẫn file nhưng máy này không có file (engine máy khác tải về)."""
+        return bool(rel) and not (self.out_dir / rel).is_file()
+
     def _company_for(self, key: dict) -> tuple[str, str] | None:
         cands = []
         for mst, direction in ((key["nmmst"], "mua"), (key["nbmst"], "ban")):
@@ -445,9 +451,10 @@ class Importer:
         row["loai_hd"] = job_policy.SUB_TYPE_LABEL.get(row["sub_type"], row["sub_type"])
         path = invoice_job.invoice_path(self.out_dir, "xml", row, mst, "xml")
         rel = path.relative_to(self.out_dir).as_posix()
+        restored = False
         with self.store._tx() as cur:
             cur.execute("""
-                SELECT i.id, (x.invoice_id IS NOT NULL) AS has_xml FROM invoices i
+                SELECT i.id, (x.invoice_id IS NOT NULL) AS has_xml, x.xml_path FROM invoices i
                   LEFT JOIN invoice_xml x ON x.invoice_id = i.id
                  WHERE i.company_mst=%s AND i.nbmst=%s AND i.khmshdon=%s AND i.khhdon=%s AND i.shdon=%s
                  FOR UPDATE OF i
@@ -468,7 +475,7 @@ class Importer:
                 created = cur.fetchone()
                 if created is None:         # tiến trình khác vừa tạo đúng HĐ này
                     cur.execute("""
-                        SELECT i.id, (x.invoice_id IS NOT NULL) AS has_xml FROM invoices i
+                        SELECT i.id, (x.invoice_id IS NOT NULL) AS has_xml, x.xml_path FROM invoices i
                           LEFT JOIN invoice_xml x ON x.invoice_id = i.id
                          WHERE i.company_mst=%s AND i.nbmst=%s AND i.khmshdon=%s AND i.khhdon=%s AND i.shdon=%s
                     """, (mst, key["nbmst"], key["khmshdon"], key["khhdon"], key["shdon"]))
@@ -478,7 +485,10 @@ class Importer:
             if found is not None:
                 invoice_id = found["id"]
                 code = "DUPLICATE" if found["has_xml"] else "MERGED"
-            if code != "DUPLICATE":
+                if code == "DUPLICATE" and self._missing_here(found.get("xml_path")):
+                    invoice_job.atomic_write(self.out_dir / found["xml_path"], data)
+                    code, restored = "MERGED", True
+            if code != "DUPLICATE" and not restored:
                 invoice_job.atomic_write(path, data)
                 InvoiceStore._save_xml(cur, invoice_id, rel, sha, parsed, partner, "xml_upload")
                 InvoiceStore._finish_task(cur, invoice_id, "xml", self.run_id)
@@ -491,6 +501,8 @@ class Importer:
             self.batch_invoices.append(inv)
         message = {"NEW": "Tạo hóa đơn mới", "MERGED": "Bổ sung XML cho hóa đơn đã có",
                    "DUPLICATE": "Hóa đơn đã có XML"}[code]
+        if restored:
+            message = "Bổ sung file XML (máy chủ chưa có file)"
         return Outcome(code, message, invoice_id, **base)
 
     # -- PDF ---------------------------------------------------------------
@@ -513,6 +525,9 @@ class Importer:
         base = dict(invoice_id=inv["id"], nbmst=inv["nbmst"], nmmst=inv.get("nmmst"),
                     total=float(inv["tong_tien"]) if inv.get("tong_tien") is not None else None)
         if inv.get("has_pdf"):
+            if self._missing_here(inv.get("pdf_path")):
+                invoice_job.atomic_write(self.out_dir / inv["pdf_path"], data)
+                return Outcome("MERGED", "Bổ sung file PDF (máy chủ chưa có file)", **base)
             return Outcome("DUPLICATE", "Hóa đơn đã có PDF", **base)
         path = invoice_job.invoice_path(self.out_dir, "pdf", inv, inv["company_mst"], "pdf")
         invoice_job.atomic_write(path, data)

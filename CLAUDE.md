@@ -910,6 +910,10 @@ rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API ch
 - **Worker yêu cầu** (09/11, `web/weinvoice_worker.py`, record `docs/issues/weinvoice-engine-request-worker-2026-11-09.md` của api):
   SYNC theo tháng (danh sách + XML, ghi `winv_sync_cvrg`), FETCH_XML / FETCH_PDF chạy ngay (mã/link nhập tay thắng mã đoán từ XML),
   IMPORT (lô `winv_upld_*` hoặc 1 XML của 1 HĐ; NEW/MERGED/DUPLICATE/FOREIGN/PDF_PENDING/ERROR), TEST_DATA (thư mục TestData).
+  **11/11:** HĐ đã có XML/PDF trong DB nhưng **máy đang chạy không có file** (engine máy khác tải) → IMPORT ghi file nạp vào
+  đúng `xml_path`/`pdf_path` đã lưu, báo MERGED "Bổ sung file … (máy chủ chưa có file)", không parse lại; có file thì vẫn DUPLICATE.
+  **Chỉ chạy `weinvoice_worker.py` trên máy có thư mục lưu trữ của api (.13)**: worker máy khác nhận yêu cầu thì không đọc
+  được file tải lên (11/11 laptop nhận #13 → `FileNotFoundError`).
   HĐ tạo từ file tải lên: `list_raw.nguon = upload|test_data`, XML `invoice_details.nguon = 'xml_upload'` (CHECK nới trong
   `db/schema.sql`, áp bằng `init-db`), PDF `source_id = upload|test_data`. MST chưa có tài khoản GDT → dòng `companies` tạm
   `gdt_username='#upload:<MST>'`, `active=false`; khi CONNECTED, `weinvoice_bridge` đổi sang tài khoản thật. Hợp đồng: `README.md`
