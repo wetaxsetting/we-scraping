@@ -55,6 +55,27 @@ def test_only_known_flat_names_are_extracted(tmp_path):
     assert not (tmp_path.parent / "evil.html").exists()
 
 
+BG_HTML = """<html><head><style>.bg-container{position:fixed;background-image:url("viewinvoice-bg.jpg")}</style></head>
+<BODY class="x"><div class="main-page">HĐ</div></BODY></html>"""
+
+
+def test_background_div_is_added_once_right_after_body(tmp_path):
+    page = gdt_pdf._extract(gdt_zip(BG_HTML), tmp_path)
+    html = page.read_text(encoding="utf-8")
+    assert '<BODY class="x"><div class="bg-container"></div><div class="main-page">' in html
+    gdt_pdf._add_background(page)                       # chạy lại không chèn thêm
+    assert page.read_text(encoding="utf-8").count('class="bg-container"') == 1
+
+
+def test_background_div_skipped_without_css_or_image(tmp_path):
+    page = gdt_pdf._extract(gdt_zip(HTML), tmp_path)     # CSS không có .bg-container
+    assert "bg-container" not in page.read_text(encoding="utf-8")
+    other = tmp_path / "noimg"
+    other.mkdir()
+    page = gdt_pdf._extract(_zip({"invoice.html": BG_HTML}), other)   # thiếu ảnh nền
+    assert '<div class="bg-container">' not in page.read_text(encoding="utf-8")
+
+
 def test_oversized_entry_is_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(gdt_pdf, "MAX_ENTRY", 10)
     with pytest.raises(gdt_pdf.GdtPdfError, match="quá lớn"):

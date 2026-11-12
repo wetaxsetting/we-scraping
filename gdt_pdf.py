@@ -17,6 +17,7 @@ import atexit
 import io
 import logging
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -61,7 +62,30 @@ def _extract(zip_bytes: bytes, dest: Path) -> Path:
     page = dest / PAGE
     if not page.exists():
         raise GdtPdfError("ZIP không có invoice.html")
+    _add_background(page)
     return page
+
+
+BG_DIV = '<div class="bg-container"></div>'
+_BODY = re.compile(rb"<body[^>]*>", re.IGNORECASE)
+
+
+def _add_background(page: Path) -> None:
+    """Nền trống đồng + viền đôi trên mọi trang in.
+
+    CSS của GDT đã có sẵn `.bg-container` (position: fixed, ảnh `viewinvoice-bg.jpg`, viền đôi) và cho
+    `.main-page` nằm trên nó (z-index 1); khi in thì bỏ nền của `.main-page`. Nhưng `invoice.html` trong
+    ZIP không có thẻ `div.bg-container` (cổng chèn nó ở khung xem) → in ra mất nền. Chèn đúng thẻ đó
+    ngay sau `<body>`; phần tử fixed được Chromium lặp lại trên từng trang in.
+    """
+    if not (page.parent / "viewinvoice-bg.jpg").exists():
+        return
+    html = page.read_bytes()
+    if b"bg-container" not in html or BG_DIV.encode() in html:
+        return
+    m = _BODY.search(html)
+    if m:
+        page.write_bytes(html[:m.end()] + BG_DIV.encode() + html[m.end():])
 
 
 class _Renderer:

@@ -365,15 +365,16 @@ class InvoiceStore:
             cur.execute("UPDATE invoice_xml SET gdt_pdf_path=%s WHERE invoice_id=%s", (pdf_path, invoice_id))
 
     def gdt_pdf_candidates(self, company_mst: str | None = None, limit: int | None = None,
-                           include_with_pdf: bool = False) -> list[dict]:
-        """HĐ có XML từ Thuế mà chưa có bản PDF của Thuế (mặc định: chỉ HĐ chưa có PDF gốc NCC)."""
+                           include_with_pdf: bool = False, redo: bool = False) -> list[dict]:
+        """HĐ có XML từ Thuế mà chưa có bản PDF của Thuế (mặc định: chỉ HĐ chưa có PDF gốc NCC).
+        `redo`: cả HĐ đã có bản PDF của Thuế (dựng lại sau khi đổi cách dựng)."""
         sql = """
             SELECT i.id, i.company_mst, i.nbmst, i.khmshdon, i.khhdon, i.shdon, i.ngay_lap
               FROM invoices i
               JOIN invoice_xml x ON x.invoice_id = i.id
-             WHERE x.gdt_pdf_path IS NULL
+             WHERE (%s OR x.gdt_pdf_path IS NULL)
         """
-        params: list = []
+        params: list = [redo]
         if not include_with_pdf:
             sql += " AND NOT EXISTS (SELECT 1 FROM invoice_pdf p WHERE p.invoice_id = i.id)"
         if company_mst:

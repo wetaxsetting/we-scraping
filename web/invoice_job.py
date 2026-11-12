@@ -1166,7 +1166,7 @@ def cmd_unblock_login(store, args) -> int:
 def cmd_gdt_pdf(store, args) -> int:
     """Dựng bù PDF của Thuế từ ZIP đã lưu ở <out>/temp/ (không gọi GDT)."""
     out_dir = output_dir()
-    rows = store.gdt_pdf_candidates(args.company, args.limit, include_with_pdf=args.all)
+    rows = store.gdt_pdf_candidates(args.company, args.limit, include_with_pdf=args.all, redo=args.redo)
     done = no_zip = failed = 0
     for i, row in enumerate(rows, 1):
         task = {**row, "id": row["id"]}
@@ -1290,6 +1290,7 @@ def main(argv=None) -> int:
     p.add_argument("--company", help="chỉ 1 MST")
     p.add_argument("--limit", type=int)
     p.add_argument("--all", action="store_true", help="cả HĐ đã có PDF gốc NCC")
+    p.add_argument("--redo", action="store_true", help="dựng lại cả bản đã có (sau khi đổi cách dựng)")
 
     p = sub.add_parser("set-provider", help="gắn adapter PDF cho 1 đơn vị cung cấp HĐĐT")
     p.add_argument("--mst-tcgp", required=True)

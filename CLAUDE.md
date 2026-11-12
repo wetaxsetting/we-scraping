@@ -401,7 +401,10 @@ Code tách 2 hàm chính: `run_xml_step` (bước 2–4: GDT → XML, lệnh `xm
    `details.js`, 2 ảnh). `gdt_pdf.py` in `invoice.html` (trang xem HĐ của cổng Thuế, có QR + khung chữ ký) ra PDF bằng
    Chromium chặn mạng → `output/pdf_gdt/...` + `invoice_xml.gdt_pdf_path`; lỗi chỉ ghi log. Bản tạm: backend chỉ liệt kê
    (`pdf-gdt`, kind `pdf_gdt`) khi chưa có PDF gốc NCC / PDF tải lên; không tính là "có PDF". Dựng bù từ ZIP đã lưu:
-   `invoice_job.py gdt-pdf [--company MST] [--limit N] [--all]` (không gọi GDT; ZIP ở máy khác thì phải chạy ở máy đó).
+   `invoice_job.py gdt-pdf [--company MST] [--limit N] [--all] [--redo]` (không gọi GDT; ZIP ở máy khác thì phải chạy ở máy đó;
+   `--redo` dựng lại cả bản đã có). Nền trống đồng + viền đôi (12/11): HTML trong ZIP thiếu thẻ `div.bg-container` mà CSS của GDT
+   đã khai (cổng tự chèn ở khung xem) → `gdt_pdf._add_background` chèn lại, lặp trên mọi trang in. Dấu tích chữ ký chỉ có khi XML có
+   chữ ký người bán (HĐ MTT không ký thì GDT cũng không vẽ, đo 8/400 ZIP) — không tự vẽ thêm.
    Tắt: `INVOICE_GDT_PDF=0`.
 5. **Mail** (nếu cấu hình), xem mục 2.7: XML cho HĐ Thuế không có XML, PDF đính kèm.
    Chạy trước bước PDF để PDF đã có trong mail thì không phải gọi site NCC.
