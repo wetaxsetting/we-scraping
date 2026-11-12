@@ -543,9 +543,25 @@ class InvoiceStore:
                        note=COALESCE(%s, note) WHERE id=%s
             """, (status, invoice_id, note, file_id))
 
-    def unmatched_email_files(self) -> list:
+    def unmatched_email_files(self, mailboxes: list | None = None, exclude: list | None = None) -> list:
+        """File mail chưa khớp. mailboxes: chỉ file của các tài khoản mail này (phần trước '/' của
+        email_messages.mailbox) — hộp mail WeInvoice không được đụng file của hộp khác.
+        exclude (khi mailboxes=None): bỏ file của các tài khoản này (hộp mail người dùng WeInvoice)."""
         with self._tx() as cur:
-            cur.execute("SELECT * FROM email_files WHERE status='unmatched' ORDER BY id")
+            if mailboxes is None and exclude:
+                cur.execute("""
+                    SELECT f.* FROM email_files f JOIN email_messages m ON m.id = f.email_id
+                     WHERE f.status='unmatched' AND lower(split_part(m.mailbox, '/', 1)) <> ALL(%s::text[])
+                     ORDER BY f.id
+                """, ([a.lower() for a in exclude],))
+            elif mailboxes is None:
+                cur.execute("SELECT * FROM email_files WHERE status='unmatched' ORDER BY id")
+            else:
+                cur.execute("""
+                    SELECT f.* FROM email_files f JOIN email_messages m ON m.id = f.email_id
+                     WHERE f.status='unmatched' AND split_part(m.mailbox, '/', 1) = ANY(%s)
+                     ORDER BY f.id
+                """, (list(mailboxes),))
             return cur.fetchall()
 
     def add_email_links(self, email_id: int, links: list, invoice_id: int | None = None) -> int:
@@ -579,9 +595,12 @@ class InvoiceStore:
             """, (invoice_id,))
             return True
 
-    def pending_email_links(self, max_attempts: int = 3) -> list:
+    def pending_email_links(self, max_attempts: int = 3, mailboxes: list | None = None,
+                            exclude: list | None = None) -> list:
         """Link 'new' (chưa xử lý / lỗi chưa quá max_attempts lần), kèm tiêu đề + mã trong mail.
-        mail_has_pdf: chính mail đó đã kèm PDF hóa đơn (không tính file bị loại not_ours/not_invoice)."""
+        mail_has_pdf: chính mail đó đã kèm PDF hóa đơn (không tính file bị loại not_ours/not_invoice).
+        mailboxes: chỉ link trong mail của các tài khoản này (None = mọi hộp).
+        exclude (khi mailboxes=None): bỏ link của các tài khoản này (hộp mail người dùng WeInvoice)."""
         with self._tx() as cur:
             cur.execute("""
                 SELECT l.*, m.subject, m.stats -> 'codes' AS mail_codes,
@@ -591,8 +610,13 @@ class InvoiceStore:
                                   AND f.status IN ('matched', 'duplicate', 'unmatched')) AS mail_has_pdf
                   FROM email_links l JOIN email_messages m ON m.id = l.email_id
                  WHERE l.status = 'new' AND l.attempts < %s
+                   AND (%s::text[] IS NULL OR split_part(m.mailbox, '/', 1) = ANY(%s::text[]))
+                   AND (%s::text[] IS NULL OR lower(split_part(m.mailbox, '/', 1)) <> ALL(%s::text[]))
                  ORDER BY l.email_id, l.id
-            """, (max_attempts,))
+            """, (max_attempts, None if mailboxes is None else list(mailboxes),
+                  None if mailboxes is None else list(mailboxes),
+                  None if not exclude else [a.lower() for a in exclude],
+                  None if not exclude else [a.lower() for a in exclude]))
             return cur.fetchall()
 
     def set_email_link(self, link_id: int, status: str, invoice_id: int | None = None,

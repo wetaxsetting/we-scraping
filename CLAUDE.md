@@ -720,6 +720,12 @@ ABBank (captcha ảnh, HĐ của Genuwin 1201547669 không phải công ty mình
 - Hộp cá nhân `the.lai@` có nhiều mail nội bộ "[Webcash Việt Nam] BÀN GIAO DATA HÓA ĐƠN PHẦN MỀM WeTax…"
   (ảnh + xlsx + link Google Drive): tiêu đề có "hóa đơn" nên bị tính là mail HĐ, không có gì để lấy →
   `no_file`. Vô hại, hết khi chuyển sang hộp `einvoice@`.
+- **Hộp mail của khách WeInvoice** (12/11, hồ sơ `we-invoice/we-scraping-api/docs/features/addon-service/weinvoice/weinvoice-mailbox-connections-2026-11-12.md`):
+  khách nối Gmail (mật khẩu ứng dụng) / Outlook-M365 (đăng nhập Microsoft, refresh token) / mail công ty (IMAP) trên web →
+  `weinvoice.winv_mlbx_infm` (bí mật mã hoá như `gdt_pw_enc`). Backend gọi `POST /internal/mail/login-test` (`web/internal_api.py`)
+  trước khi lưu; `web/weinvoice_worker.py` quét khi bấm "Quét ngay" (`MAIL_SCAN`) và định kỳ `WEINVOICE_MAIL_SCAN_MINUTES` (30).
+  Mỗi hộp **chỉ gắn file vào HĐ của MST của hộp đó**; luồng `.env` (Webcash) **bỏ qua** file/link của mọi địa chỉ trong bảng này
+  (`weinvoice_bridge.user_mailbox_accounts`). Outlook cần `WEINVOICE_MS_CLIENT_ID/SECRET` = khóa của backend.
 - **Cửa sổ 7 ngày:** mail không được quét trong 7 ngày kể từ lúc nhận thì bị bỏ qua luôn. Chưa có lịch chạy
   (Task Scheduler/server) thì phải chạy `mail`/`tick` ít nhất mỗi tuần, hoặc tăng `INVOICE_MAIL_DAYS`
   (mail đã xem chỉ đọc lại header Message-ID nên cửa sổ rộng vẫn nhẹ).

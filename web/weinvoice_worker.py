@@ -16,6 +16,10 @@ Hợp đồng (backend README §"Engine contract"):
 | FETCH_PDF | gọi adapter NCC ngay cho 1 HĐ (mã/link tra cứu người dùng nhập được ưu tiên) |
 | IMPORT    | nhập file người dùng tải lên (lô `winv_upld_*` hoặc 1 file XML của 1 HĐ) |
 | TEST_DATA | nạp thư mục TestData (XML/, PDF/, ma_tra_cuu.csv) |
+| MAIL_SCAN | quét ngay 1 hộp mail người dùng kết nối (`mailbox_id`), chỉ gắn file vào HĐ của MST của hộp |
+
+Ngoài hàng đợi: cứ `WEINVOICE_MAIL_SCAN_MINUTES` phút (mặc định 30, 0 = tắt) quét mọi hộp mail CONNECTED
+trong `winv_mlbx_infm` (mỗi hộp 1 lượt, hộp lỗi không chặn hộp khác).
 
 Ngày giờ của bảng WeInvoice là chuỗi `YYYYMMDDHH24MISS` giờ UTC (như `WeInvoiceTime` bên Java).
 Worker không bao giờ trả về / ghi log mật khẩu; đăng nhập GDT đi qua `invoice_job.TokenProvider`.
@@ -48,6 +52,7 @@ import invoice_job                                # noqa: E402  (nạp .env, sys
 import api_client                                 # noqa: E402
 import job_policy                                 # noqa: E402
 import mail_ingest                                # noqa: E402
+import mail_reader                                # noqa: E402
 import pdf_providers                              # noqa: E402
 import weinvoice_bridge                           # noqa: E402
 import xml_parser                                 # noqa: E402
@@ -57,7 +62,7 @@ from psycopg2.extras import Json                  # noqa: E402
 log = logging.getLogger("weinvoice_worker")
 
 ENGINE_USER = "engine"
-TYPES = ("SYNC", "FETCH_XML", "FETCH_PDF", "IMPORT", "TEST_DATA")
+TYPES = ("SYNC", "FETCH_XML", "FETCH_PDF", "IMPORT", "TEST_DATA", "MAIL_SCAN")
 POLL_SECONDS = 5.0
 STALE_MINUTES = 180             # RUNNING không cập nhật quá lâu = worker chết giữa chừng
 XML_BATCH = 5                   # mỗi mẻ XML ngắn để kiểm tra hủy thường xuyên
@@ -594,6 +599,184 @@ def _order_files(rows: list, name_key: str) -> list:
 # Worker
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Hộp mail người dùng kết nối (MAIL_SCAN + quét định kỳ)
+# ---------------------------------------------------------------------------
+
+MAIL_CHECK_SECONDS = 60         # bao lâu xem lại hộp nào tới hạn quét (mỗi hộp tới hạn theo last_scan_dtm)
+MAIL_TIMEOUT = 60               # giây, socket IMAP khi quét
+MAIL_MAX_DAYS = 365
+
+
+def mail_scan_minutes() -> int:
+    try:
+        return max(0, int(os.getenv("WEINVOICE_MAIL_SCAN_MINUTES") or 30))
+    except ValueError:
+        return 30
+
+
+def mail_scan_days(value=None) -> int:
+    """Quét mail nhận trong N ngày gần nhất: tham số yêu cầu → WEINVOICE_MAIL_DAYS → 30. Mail đã xem chỉ
+    đọc lại header Message-ID nên cửa sổ rộng vẫn nhẹ."""
+    for v in (value, os.getenv("WEINVOICE_MAIL_DAYS")):
+        try:
+            if v not in (None, ""):
+                return min(MAIL_MAX_DAYS, max(1, int(v)))
+        except (TypeError, ValueError):
+            continue
+    return 30
+
+
+def mailbox_folders(mbx: dict) -> list[str]:
+    return [f.strip() for f in (mbx.get("fldr_list") or "INBOX").split(",") if f.strip()] or ["INBOX"]
+
+
+@dataclass
+class MailScanResult:
+    status: str                       # ok | no_mst | rejected | expired | unavailable | config
+    message: str | None = None
+    invoices: int = 0
+    missing_folders: list = field(default_factory=list)
+    folder_errors: dict = field(default_factory=dict)
+    stats: Counter = field(default_factory=Counter)
+
+    def as_dict(self, mailbox_id: int) -> dict:
+        st = self.stats
+        return {"mailbox_id": mailbox_id, "invoices": self.invoices, "mail_new": st["mail_new"],
+                "mail_invoice": st["mail_invoice"], "xml_saved": st["xml_saved"], "pdf_saved": st["pdf_saved"],
+                "links_fetched": st["link_fetched"], "unmatched": st["xml_unmatched"] + st["pdf_unmatched"],
+                "missing_folders": list(self.missing_folders),
+                "folder_errors": dict(self.folder_errors)}
+
+
+def _mail_login_kwargs(mbx: dict, secret: str, rotated: dict) -> dict:
+    """Tham số đăng nhập ImapMailbox theo auth_type. OAUTH_MS: đổi refresh token 1 lần mỗi lượt quét,
+    refresh token mới (Microsoft xoay vòng) ghi vào `rotated['refresh_token']`."""
+    auth = (mbx.get("auth_type") or "").upper()
+    if auth in ("PASSWORD", "APP_PASSWORD"):
+        return {"auth": "password", "password": secret}
+    if auth == "OAUTH_MS":
+        client = weinvoice_bridge.ms_client()
+        if client is None:
+            raise RequestFailed("Engine chưa cấu hình đăng nhập Microsoft "
+                                "(WEINVOICE_MS_CLIENT_ID / WEINVOICE_MS_CLIENT_SECRET)")
+        cache: dict = {}
+
+        def token() -> str:
+            if "access" not in cache:
+                access, new_rt = mail_reader.microsoft_refresh_token(client[0], client[1], secret)
+                cache["access"] = access
+                if new_rt:
+                    rotated["refresh_token"] = new_rt
+            return cache["access"]
+        return {"auth": "oauth2_microsoft", "password": None, "token_provider": token}
+    raise RequestFailed(f"Kiểu đăng nhập hộp mail không hỗ trợ: {auth or '(trống)'}")
+
+
+def scan_mailbox(store, out_dir: Path, mbx: dict, run_id: int | None = None, days: int | None = None,
+                 progress=None) -> MailScanResult:
+    """Quét 1 hộp mail người dùng kết nối và ghi kết quả vào `winv_mlbx_infm`.
+
+    Mở IMAP chỉ đọc 1 lần, lần lượt EXAMINE từng thư mục, chạy mail_ingest **chỉ gắn file vào HĐ của
+    MST của hộp** (`weinvoice_bridge.mailbox_msts`), rồi xử lý link tra cứu trong mail của chính hộp.
+    Trạng thái: đăng nhập bị từ chối → ERROR; Microsoft invalid_grant → EXPIRED; lỗi mạng → giữ trạng
+    thái, chỉ ghi conn_msg; xong → CONNECTED + last_scan_dtm / last_scan_cnt (= số HĐ vừa có file).
+    `progress(folder=..., done=..., total=...)` được gọi giữa các thư mục (worker dùng để báo tiến độ / hủy).
+    """
+    mid = int(mbx["mlbx_seq"])
+    address = (mbx.get("mail_addr") or "").strip().lower()
+    folders = mailbox_folders(mbx)
+    days = mail_scan_days(days)
+    res = MailScanResult("ok")
+
+    def save(status, message, scanned=False, cnt=None, secret_enc=None):
+        weinvoice_bridge.update_mailbox_scan(store, mid, status, message, cnt, scanned=scanned,
+                                             secret_enc=secret_enc)
+
+    msts = weinvoice_bridge.mailbox_msts(store, mbx)
+    if not msts:
+        res.status, res.message = "no_mst", "Hộp mail chưa gắn MST nào (MST đã bị xoá?) — không có HĐ để gắn file"
+        save(None, res.message, scanned=True, cnt=0)
+        return res
+    try:
+        secret = weinvoice_bridge.decrypt(mbx.get("secret_enc"))
+    except ValueError as e:
+        secret, err = None, str(e)
+    else:
+        err = "Engine chưa có WEINVOICE_SECRET_KEY: không giải mã được bí mật hộp mail"
+    if not secret:
+        res.status, res.message = "config", err
+        save(None, err)
+        return res
+    rotated: dict = {}
+    try:
+        kw = _mail_login_kwargs(mbx, secret, rotated)
+    except RequestFailed as e:
+        res.status, res.message = "config", str(e)
+        save(None, res.message)
+        return res
+
+    mb = mail_reader.ImapMailbox(mbx.get("imap_host") or "", int(mbx.get("imap_port") or 993),
+                                 (mbx.get("login_id") or address).strip(), kw.pop("password", None),
+                                 folder=folders[0], timeout=MAIL_TIMEOUT, tls_mode=mbx.get("tls_mode") or "SSL",
+                                 label=address, **kw)
+    filled: set = set()
+    try:
+        try:
+            mb.connect()
+        except mail_reader.MailAuthExpired as e:
+            res.status, res.message = "expired", f"Phiên đăng nhập Microsoft đã hết hạn hoặc bị thu hồi: {e}"
+        except mail_reader.MailLoginRefused as e:
+            res.status, res.message = "rejected", str(e)
+        except mail_reader.MailError as e:
+            res.status, res.message = "unavailable", str(e)
+        if res.status != "ok":
+            log.warning("Hộp mail #%s %s: %s", mid, address, res.message)
+            save({"expired": "EXPIRED", "rejected": "ERROR"}.get(res.status), res.message,
+                 secret_enc=_encrypt_rotated(rotated))
+            return res
+        for i, folder in enumerate(folders):
+            if progress:
+                progress(folder=folder, done=i, total=len(folders))
+            if not mb.select_readonly(folder):
+                res.missing_folders.append(folder)
+                continue
+            mb.folder = folder
+            try:
+                filled |= mail_ingest.run(store, mb, out_dir, run_id, days, res.stats, restrict_msts=msts)
+            except mail_reader.MailError as e:      # rớt kết nối giữa chừng: dừng các thư mục sau
+                res.folder_errors[folder] = str(e)[:300]
+                log.warning("Hộp mail #%s %s [%s]: %s", mid, address, folder, e)
+                break
+    finally:
+        mb._close()
+    if progress:
+        progress(folder=None, done=len(folders), total=len(folders))
+    # Link tra cứu trong mail của chính hộp này (kể cả lượt trước còn chờ) → adapter NCC
+    filled |= mail_ingest.process_links(store, out_dir, run_id, res.stats, restrict_msts=msts, mailboxes=[address])
+    res.invoices = len(filled)
+    notes = []
+    if res.missing_folders:
+        notes.append("Không có thư mục: " + ", ".join(res.missing_folders))
+    if res.folder_errors:
+        notes.append("Lỗi khi đọc: " + "; ".join(f"{k}: {v}" for k, v in res.folder_errors.items()))
+    res.message = " · ".join(notes) or None
+    save("CONNECTED", res.message, scanned=True, cnt=res.invoices, secret_enc=_encrypt_rotated(rotated))
+    log.info("Hộp mail #%s %s: %d HĐ có file mới, %s", mid, address, res.invoices, dict(res.stats))
+    return res
+
+
+def _encrypt_rotated(rotated: dict) -> str | None:
+    rt = rotated.get("refresh_token")
+    return weinvoice_bridge.encrypt(rt) if rt else None
+
+
+def _run_status(res: MailScanResult) -> str:
+    if res.status not in ("ok", "no_mst"):
+        return "error"
+    return "partial" if (res.missing_folders or res.folder_errors or res.stats["mail_error"]) else "ok"
+
+
 class Worker:
     def __init__(self, store: InvoiceStore, out_dir: Path | None = None):
         self.store = store
@@ -601,7 +784,8 @@ class Worker:
         self.out_dir = out_dir or invoice_job.output_dir()
         self.handlers = {"SYNC": self.do_sync, "FETCH_XML": self.do_fetch_xml,
                          "FETCH_PDF": self.do_fetch_pdf, "IMPORT": self.do_import,
-                         "TEST_DATA": self.do_test_data}
+                         "TEST_DATA": self.do_test_data, "MAIL_SCAN": self.do_mail_scan}
+        self._next_mail_check = 0.0
 
     # -- vòng chạy ---------------------------------------------------------
     def run_one(self) -> bool:
@@ -639,11 +823,80 @@ class Worker:
         if n:
             log.warning("WeInvoice: %d yêu cầu RUNNING bị bỏ dở → FAILED", n)
         while True:
+            if not once:
+                self.maybe_scan_mailboxes()
             if self.run_one():
                 continue
             if once:
                 return 0
             time.sleep(poll)
+
+    # -- hộp mail ------------------------------------------------------------
+    def maybe_scan_mailboxes(self) -> int:
+        """Mỗi MAIL_CHECK_SECONDS: quét các hộp CONNECTED chưa quét trong WEINVOICE_MAIL_SCAN_MINUTES phút."""
+        minutes = mail_scan_minutes()
+        if minutes <= 0 or time.monotonic() < self._next_mail_check:
+            return 0
+        self._next_mail_check = time.monotonic() + MAIL_CHECK_SECONDS
+        try:
+            return self.scan_due_mailboxes(minutes)
+        except Exception:  # noqa: BLE001 — DB rớt / bảng lỗi: không làm chết worker
+            log.exception("Quét hộp mail định kỳ lỗi")
+            return 0
+
+    def scan_due_mailboxes(self, minutes: int) -> int:
+        before = _dtm_minutes_ago(minutes)
+        n = 0
+        for mbx in weinvoice_bridge.list_mailboxes(self.store, "CONNECTED", scanned_before=before):
+            # giữ chỗ (đặt last_scan_dtm) trước khi quét: worker khác / "Quét ngay" vừa quét thì bỏ qua
+            if not weinvoice_bridge.claim_mailbox_scan(self.store, mbx["mlbx_seq"], before):
+                continue
+            n += 1
+            run_id = None
+            res = None
+            try:
+                run_id = self.store.start_run("weinvoice-mail")
+                res = scan_mailbox(self.store, self.out_dir, mbx, run_id)
+            except Exception:  # noqa: BLE001 — 1 hộp lỗi không chặn hộp khác
+                log.exception("Quét hộp mail #%s lỗi", mbx["mlbx_seq"])
+            finally:
+                if run_id is not None:
+                    self.store.finish_run(run_id, _run_status(res) if res else "error",
+                                          {"mailbox_id": mbx["mlbx_seq"], "trigger": "schedule",
+                                           **({"result": res.as_dict(mbx["mlbx_seq"]), "stats": dict(res.stats)}
+                                              if res else {})})
+        return n
+
+    def do_mail_scan(self, job: Job):
+        try:
+            mid = int(job.params.get("mailbox_id"))
+        except (TypeError, ValueError):
+            raise RequestFailed("MAIL_SCAN thiếu mailbox_id") from None
+        mbx = weinvoice_bridge.get_mailbox(self.store, mid)
+        if mbx is None or mbx["owner_id"] != job.owner:
+            raise RequestFailed("Không tìm thấy hộp mail")
+        job.report("login", folder=None, done=0, total=len(mailbox_folders(mbx)))
+        self._start_mail_run(job)
+        res = None
+        try:
+            res = scan_mailbox(self.store, self.out_dir, mbx, job.run_id, job.params.get("days"),
+                               progress=lambda **kw: job.report("scan", **kw))
+        finally:
+            if job.run_id is not None:
+                self.store.finish_run(job.run_id, _run_status(res) if res else "error",
+                                      {"mailbox_id": mid, "rqst_seq": job.id, "trigger": "manual",
+                                       **({"stats": dict(res.stats)} if res else {})})
+        if res.status not in ("ok", "no_mst"):
+            raise RequestFailed(res.message or "Không quét được hộp mail")
+        job.report("done")
+        result = res.as_dict(mid)
+        if res.status == "no_mst":
+            result["message"] = res.message
+        return ("PARTIAL" if _run_status(res) == "partial" else "DONE"), result
+
+    def _start_mail_run(self, job: Job) -> int:
+        job.run_id = self.store.start_run("weinvoice-mail")
+        return job.run_id
 
     # -- dùng chung --------------------------------------------------------
     def _company(self, mst: str) -> dict:

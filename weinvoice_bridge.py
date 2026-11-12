@@ -5,6 +5,8 @@ WeInvoice (we-scraping-api) lưu MST của người dùng + mật khẩu Cục T
   - đưa các MST đã CONNECTED vào bảng `companies` của mình để job tự lấy hoá đơn;
   - giải mã mật khẩu khi đăng nhập GDT. Mật khẩu WeInvoice xét TRƯỚC `HDT_PASSWORD_<MST>` trong `.env`
     (xem `invoice_job.resolve_password`).
+  - đọc / cập nhật hộp mail người dùng kết nối (`winv_mlbx_infm`) cho `web/weinvoice_worker.py`
+    (quét mail theo MST của hộp; refresh token Microsoft mới được mã hoá lại bằng `encrypt`).
 
 Định dạng mã hoá (khớp `WeInvoiceSecretCipher` bên Java):
     "v1:" + base64(iv[12] || AES-256-GCM(ciphertext || tag[16]))
@@ -144,3 +146,145 @@ def password_for(store, mst: str, gdt_username: str | None = None) -> str | None
         """, (mst, gdt_username or mst))
         row = cur.fetchone()
     return decrypt(row["gdt_pw_enc"]) if row else None
+
+
+def encrypt(plain: str, key: bytes | None = None, iv: bytes | None = None) -> str:
+    """Mã hoá như `WeInvoiceSecretCipher.encrypt` (Java): "v1:" + base64(iv[12] || ct || tag[16]).
+
+    Thiếu khoá → ValueError (không bao giờ lưu bí mật dạng rõ). `iv` chỉ để test; mặc định ngẫu nhiên.
+    """
+    key = key if key is not None else _key()
+    if key is None:
+        raise ValueError("Chưa đặt WEINVOICE_SECRET_KEY: không mã hoá được")
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    iv = iv if iv is not None else os.urandom(IV_BYTES)
+    if len(iv) != IV_BYTES:
+        raise ValueError("iv phải dài 12 byte")
+    return PREFIX + base64.b64encode(iv + AESGCM(key).encrypt(iv, plain.encode("utf-8"), None)).decode("ascii")
+
+
+# ---------------------------------------------------------------------------
+# Hộp mail người dùng kết nối (weinvoice.winv_mlbx_infm)
+# ---------------------------------------------------------------------------
+
+def ms_client() -> tuple[str, str] | None:
+    """(client_id, client_secret) app Microsoft của WeInvoice (`WEINVOICE_MS_CLIENT_ID` / `_SECRET`,
+    cùng giá trị `WECMS_WEINVOICE_MS_CLIENT_ID` / `_SECRET` của backend). Thiếu → None."""
+    cid = os.getenv("WEINVOICE_MS_CLIENT_ID", "").strip()
+    secret = os.getenv("WEINVOICE_MS_CLIENT_SECRET", "").strip()
+    return (cid, secret) if cid and secret else None
+
+
+MAILBOX_TABLE = "winv_mlbx_infm"
+_MAILBOX_COLS = ("mlbx_seq, owner_id, mlbx_kind, mail_addr, auth_type, imap_host, imap_port, tls_mode, "
+                 "login_id, secret_enc, fldr_list, cmpn_scope, cmpn_mst, conn_stts, conn_msg, "
+                 "last_scan_dtm, last_scan_cnt")
+
+
+def _utc_dtm(offset_seconds: float = 0) -> str:
+    """yyyyMMddHHmmss giờ UTC — quy ước các cột *_dtm của WeInvoice (`WeInvoiceTime.nowDtm` bên Java)."""
+    from datetime import datetime, timezone
+    import time
+    return datetime.fromtimestamp(time.time() + offset_seconds, timezone.utc).strftime("%Y%m%d%H%M%S")
+
+
+def _mailbox_table_exists(cur, schema: str) -> bool:
+    cur.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", (f"{schema}.{MAILBOX_TABLE}",))
+    return bool(cur.fetchone()["ok"])
+
+
+def list_mailboxes(store, status: str | None = "CONNECTED", scanned_before: str | None = None) -> list[dict]:
+    """Hộp mail chưa xoá (mặc định chỉ CONNECTED). `scanned_before` (dtm UTC): chỉ hộp chưa quét từ mốc đó.
+    Bảng chưa có (chưa chạy V2) → []."""
+    schema = app_schema()
+    with store._tx() as cur:
+        if not _mailbox_table_exists(cur, schema):
+            return []
+        cur.execute(f"""
+            SELECT {_MAILBOX_COLS} FROM {schema}.{MAILBOX_TABLE}
+             WHERE del_yn = 'N'
+               AND (%(st)s::text IS NULL OR conn_stts = %(st)s)
+               AND (%(before)s::text IS NULL OR last_scan_dtm IS NULL OR last_scan_dtm < %(before)s)
+             ORDER BY COALESCE(last_scan_dtm, ''), mlbx_seq
+        """, {"st": status, "before": scanned_before})
+        return [dict(r) for r in cur.fetchall()]
+
+
+def user_mailbox_accounts(store) -> list[str]:
+    """Mọi địa chỉ hộp mail người dùng WeInvoice (kể cả đã xoá), chữ thường. Luồng mail `.env` (Webcash)
+    bỏ qua file / link của các tài khoản này: chúng chỉ được khớp vào MST của chính hộp đó. Bảng chưa có → []."""
+    schema = app_schema()
+    with store._tx() as cur:
+        if not _mailbox_table_exists(cur, schema):
+            return []
+        cur.execute(f"SELECT DISTINCT lower(mail_addr) AS a FROM {schema}.{MAILBOX_TABLE}")
+        return [r["a"] for r in cur.fetchall() if r["a"]]
+
+
+def get_mailbox(store, mailbox_id: int) -> dict | None:
+    """1 hộp mail chưa xoá (mọi trạng thái), hoặc None."""
+    schema = app_schema()
+    with store._tx() as cur:
+        if not _mailbox_table_exists(cur, schema):
+            return None
+        cur.execute(f"SELECT {_MAILBOX_COLS} FROM {schema}.{MAILBOX_TABLE} WHERE mlbx_seq = %s AND del_yn = 'N'",
+                    (int(mailbox_id),))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def mailbox_msts(store, mailbox: dict) -> set[str]:
+    """MST mà hộp mail này được gắn HĐ vào: ONE → cmpn_mst; ALL → mọi MST chưa xoá của chủ hộp."""
+    if (mailbox.get("cmpn_scope") or "ONE").upper() != "ALL":
+        mst = (mailbox.get("cmpn_mst") or "").strip()
+        return {mst} if mst else set()
+    schema = app_schema()
+    with store._tx() as cur:
+        if not _table_exists(cur, schema):
+            return set()
+        cur.execute(f"SELECT DISTINCT cmpn_mst FROM {schema}.winv_cmpn_infm WHERE owner_id = %s AND del_yn = 'N'",
+                    (mailbox["owner_id"],))
+        return {r["cmpn_mst"] for r in cur.fetchall() if r["cmpn_mst"]}
+
+
+def claim_mailbox_scan(store, mailbox_id: int, scanned_before: str) -> bool:
+    """Giữ chỗ quét định kỳ: đặt last_scan_dtm = bây giờ nếu hộp chưa quét từ `scanned_before`.
+
+    False = vừa có lượt khác quét (worker khác / người dùng bấm "Quét ngay") → bỏ qua.
+    """
+    schema = app_schema()
+    dtm = _utc_dtm()
+    with store._tx() as cur:
+        cur.execute(f"""
+            UPDATE {schema}.{MAILBOX_TABLE} SET last_scan_dtm = %s
+             WHERE mlbx_seq = %s AND del_yn = 'N' AND conn_stts = 'CONNECTED'
+               AND (last_scan_dtm IS NULL OR last_scan_dtm < %s)
+        """, (dtm, int(mailbox_id), scanned_before))
+        return cur.rowcount == 1
+
+
+def update_mailbox_scan(store, mailbox_id: int, status: str | None, message: str | None,
+                        scan_cnt: int | None = None, scanned: bool = False,
+                        secret_enc: str | None = None) -> int:
+    """Ghi kết quả 1 lượt quét. status None = giữ nguyên conn_stts (vd lỗi mạng tạm thời).
+
+    scanned=True → last_scan_dtm = bây giờ + last_scan_cnt. secret_enc (đã mã hoá) → thay bí mật
+    (Microsoft cấp refresh token mới). Không bao giờ nhận bí mật dạng rõ.
+    """
+    if secret_enc is not None and not secret_enc.startswith(PREFIX):
+        raise ValueError("secret_enc phải là giá trị đã mã hoá v1")
+    schema = app_schema()
+    dtm = _utc_dtm()
+    with store._tx() as cur:
+        cur.execute(f"""
+            UPDATE {schema}.{MAILBOX_TABLE}
+               SET conn_stts = COALESCE(%(st)s, conn_stts),
+                   conn_msg = %(msg)s,
+                   last_scan_dtm = CASE WHEN %(scanned)s THEN %(dtm)s ELSE last_scan_dtm END,
+                   last_scan_cnt = CASE WHEN %(scanned)s THEN %(cnt)s ELSE last_scan_cnt END,
+                   secret_enc = COALESCE(%(sec)s, secret_enc),
+                   mod_id = 'engine', mod_dtm = %(dtm)s
+             WHERE mlbx_seq = %(id)s AND del_yn = 'N'
+        """, {"st": status, "msg": (message or None) and message[:500], "scanned": bool(scanned),
+              "dtm": dtm, "cnt": scan_cnt, "sec": secret_enc, "id": int(mailbox_id)})
+        return cur.rowcount

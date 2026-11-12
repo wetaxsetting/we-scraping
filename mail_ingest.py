@@ -90,20 +90,49 @@ def _xml_key(parsed: dict) -> dict:
 
 
 class MailIngest:
-    def __init__(self, store, out_dir: Path, run_id=None):
+    """
+    restrict_msts (hộp mail người dùng WeInvoice kết nối): chỉ gắn XML/PDF vào HĐ có `company_mst`
+    thuộc tập này; XML không có bên mua/bán nào trong tập → `not_ours` (không lưu file). None = như cũ
+    (mọi công ty trong `companies`, hộp mail `.env` của Webcash).
+    mailboxes: tài khoản mail (phần trước '/' của `email_messages.mailbox`) mà rematch / process_links
+    được đụng tới. None = mọi hộp (như cũ).
+    `filled`: id HĐ vừa được gắn file mới trong lượt này (để đếm `last_scan_cnt`).
+    """
+
+    def __init__(self, store, out_dir: Path, run_id=None, restrict_msts=None, mailboxes=None):
         self.store, self.out_dir, self.run_id = store, Path(out_dir), run_id
-        self.managed = {m.split("-")[0] for m in store.managed_msts()}
+        if restrict_msts is None:
+            self.allowed = None
+            self.managed = {m.split("-")[0] for m in store.managed_msts()}
+        else:
+            self.allowed = {m for m in restrict_msts if m}
+            self.managed = {m.split("-")[0] for m in self.allowed}
+        self.mailboxes = None if mailboxes is None else sorted({m for m in mailboxes if m})
+        # Luồng `.env` (không giới hạn): không đụng file / link của hộp mail người dùng WeInvoice.
+        self.exclude: list = []
+        if self.mailboxes is None and self.allowed is None:
+            try:
+                import weinvoice_bridge
+                self.exclude = weinvoice_bridge.user_mailbox_accounts(store)
+            except Exception:  # noqa: BLE001 — store giả / chưa có bảng → giữ hành vi cũ
+                self.exclude = []
+        self.filled: set = set()
 
     # ------------------------------------------------------------------
     def _ours(self, key: dict) -> bool:
         return any((key.get(k) or "").split("-")[0] in self.managed for k in ("nmmst", "nbmst"))
+
+    def _company_ok(self, company_mst: str) -> bool:
+        if self.allowed is not None:
+            return company_mst in self.allowed
+        return company_mst.split("-")[0] in self.managed
 
     def _match(self, key: dict) -> dict | None:
         if not (key["nbmst"] and key["khmshdon"] and key["khhdon"] and key["shdon"] is not None):
             return None
         rows = [r for r in self.store.find_invoices(key["nbmst"], key["khmshdon"], key["khhdon"],
                                                     key["shdon"])
-                if r["company_mst"].split("-")[0] in self.managed]
+                if self._company_ok(r["company_mst"])]
         return rows[0] if len(rows) == 1 else None
 
     def _match_pdf_text(self, text: str) -> dict | None:
@@ -112,7 +141,7 @@ class MailIngest:
         compact = "".join(text.split())
         msts = sorted(set(_MST_RE.findall(compact)) | set(_MST_RE.findall(text)))
         rows = [r for r in self.store.find_invoices_in_text(msts, compact)
-                if r["company_mst"].split("-")[0] in self.managed and _has_number(text, r["shdon"])]
+                if self._company_ok(r["company_mst"]) and _has_number(text, r["shdon"])]
         if len(rows) > 1:                       # PDF HĐ thay thế/điều chỉnh có cả số HĐ gốc → bỏ HĐ gốc
             cited = _cited_numbers(text)
             rows = [r for r in rows if int(r["shdon"]) not in cited] or rows
@@ -160,6 +189,7 @@ class MailIngest:
             status = "matched" if saved else "duplicate"
             stats["xml_saved" if saved else "xml_duplicate"] += 1
             if saved:
+                self.filled.add(inv["id"])
                 log.info("Mail → XML %s (HĐ %s %s-%s, nguon=xml_email)", path_rel, inv["nbmst"],
                          inv["khhdon"], inv["shdon"])
         if file_id is None:
@@ -215,6 +245,7 @@ class MailIngest:
             status = "matched" if saved else "duplicate"
             stats["pdf_saved" if saved else "pdf_duplicate"] += 1
             if saved:
+                self.filled.add(inv["id"])
                 log.info("Mail → PDF %s", path_rel)
         key = {k: inv[k] for k in ("nbmst", "khmshdon", "khhdon", "shdon")}
         if file_id is None:
@@ -268,7 +299,10 @@ class MailIngest:
         import job_policy
         import pdf_providers
         breakers, done_mail, handled = {}, set(), 0
-        for link in self.store.pending_email_links():
+        pending = (self.store.pending_email_links(mailboxes=self.mailboxes) if self.mailboxes is not None
+                   else self.store.pending_email_links(exclude=self.exclude) if self.exclude
+                   else self.store.pending_email_links())
+        for link in pending:
             if link.get("mail_has_pdf"):
                 self.store.set_email_link(link["id"], "mail_file")
                 stats["link_mail_has_file"] += 1
@@ -326,7 +360,10 @@ class MailIngest:
 
     def rematch(self, stats) -> None:
         """File lượt trước chưa khớp (HĐ chưa lên danh sách GDT) → khớp lại."""
-        for row in self.store.unmatched_email_files():
+        rows = (self.store.unmatched_email_files(mailboxes=self.mailboxes) if self.mailboxes is not None
+                else self.store.unmatched_email_files(exclude=self.exclude) if self.exclude
+                else self.store.unmatched_email_files())
+        for row in rows:
             path = self.out_dir / row["saved_path"]
             try:
                 data = path.read_bytes()
@@ -412,14 +449,28 @@ def open_mailbox(cfg: dict, folder: str) -> mail_reader.ImapMailbox:
                                    auth=cfg["auth"], token_provider=cfg["token_provider"])
 
 
-def process_links(store, out_dir: Path, run_id, stats, limit: int | None = None) -> None:
-    """Gọi 1 lần mỗi lượt, sau khi đã đọc xong mọi thư mục mail."""
-    MailIngest(store, out_dir, run_id).process_links(stats, limit)
+def process_links(store, out_dir: Path, run_id, stats, limit: int | None = None,
+                  restrict_msts=None, mailboxes=None) -> set:
+    """Gọi 1 lần mỗi lượt, sau khi đã đọc xong mọi thư mục mail. Trả id HĐ vừa được gắn file."""
+    ingest = MailIngest(store, out_dir, run_id, restrict_msts=restrict_msts, mailboxes=mailboxes)
+    ingest.process_links(stats, limit)
+    return ingest.filled
 
 
-def run(store, mailbox, out_dir: Path, run_id, days: int, stats, limit: int | None = None) -> None:
-    """Lấy mail mới trong `days` ngày từ `mailbox` (ImapMailbox đã mở) và xử lý."""
-    ingest = MailIngest(store, out_dir, run_id)
+def mailbox_account(mailbox_name: str) -> str:
+    """'addr@x/INBOX' → 'addr@x' (khóa tài khoản trong `email_messages.mailbox`)."""
+    return (mailbox_name or "").split("/", 1)[0]
+
+
+def run(store, mailbox, out_dir: Path, run_id, days: int, stats, limit: int | None = None,
+        restrict_msts=None) -> set:
+    """Lấy mail mới trong `days` ngày từ `mailbox` (ImapMailbox đã mở) và xử lý.
+
+    restrict_msts: xem `MailIngest` — khi có, rematch chỉ xét file của chính tài khoản mail này.
+    Trả id HĐ vừa được gắn file (XML/PDF) trong lượt.
+    """
+    ingest = MailIngest(store, out_dir, run_id, restrict_msts=restrict_msts,
+                        mailboxes=None if restrict_msts is None else [mailbox_account(mailbox.name)])
     ingest.rematch(stats)
     items = mailbox.message_ids_since(days)
     ids = [mid or f"uid:{uid}" for uid, mid in items]
@@ -439,3 +490,4 @@ def run(store, mailbox, out_dir: Path, run_id, days: int, stats, limit: int | No
             stats["mail_error"] += 1
             log.exception("Mail UID %s lỗi khi xử lý: %s", uid, e)
             store.record_email(mailbox.name, mid, True, "error", stats={"error": str(e)[:500]})
+    return ingest.filled

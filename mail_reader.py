@@ -252,6 +252,14 @@ class MailError(Exception):
     pass
 
 
+class MailLoginRefused(MailError):
+    """Máy chủ IMAP từ chối đăng nhập (sai mật khẩu / App Password, IMAP bị tắt...)."""
+
+
+class MailAuthExpired(MailError):
+    """Microsoft trả invalid_grant: refresh token bị thu hồi / hết hạn → người dùng phải đăng nhập lại."""
+
+
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
@@ -286,7 +294,7 @@ def xoauth2_string(user: str, token: str) -> bytes:
 
 # --- Lấy access token OAuth2 (gọi HTTP thường, không cần thư viện riêng) -------
 
-def _token_request(url: str, data: dict, provider: str) -> str:
+def _token_response(url: str, data: dict, provider: str) -> dict:
     import requests
     try:
         r = requests.post(url, data=data, timeout=30)
@@ -298,9 +306,32 @@ def _token_request(url: str, data: dict, provider: str) -> str:
         js = {}
     if r.status_code != 200 or not js.get("access_token"):
         # không in client_secret / refresh_token; chỉ in mã lỗi server trả về
-        raise MailError(f"{provider} từ chối cấp token (HTTP {r.status_code}): "
-                        f"{js.get('error')} {str(js.get('error_description') or '')[:200]}")
-    return js["access_token"]
+        msg = (f"{provider} từ chối cấp token (HTTP {r.status_code}): "
+               f"{js.get('error')} {str(js.get('error_description') or '')[:200]}")
+        raise (MailAuthExpired if js.get("error") == "invalid_grant" else MailError)(msg)
+    return js
+
+
+def _token_request(url: str, data: dict, provider: str) -> str:
+    return _token_response(url, data, provider)["access_token"]
+
+
+MS_DELEGATED_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+MS_DELEGATED_SCOPE = "offline_access https://outlook.office.com/IMAP.AccessAsUser.All"
+
+
+def microsoft_refresh_token(client_id: str, client_secret: str, refresh_token: str) -> tuple[str, str | None]:
+    """Microsoft (ủy quyền của người dùng, hộp mail WeInvoice): refresh token → (access token, refresh token mới).
+
+    Refresh token mới = None khi Microsoft không cấp lại (giữ cái cũ). invalid_grant (token bị thu hồi,
+    hết hạn, đổi mật khẩu) → MailAuthExpired; lỗi khác → MailError. Không bao giờ in token / client secret.
+    """
+    js = _token_response(MS_DELEGATED_TOKEN_URL,
+                         {"grant_type": "refresh_token", "client_id": client_id, "client_secret": client_secret,
+                          "refresh_token": refresh_token, "scope": MS_DELEGATED_SCOPE},
+                         "Microsoft")
+    new_rt = js.get("refresh_token")
+    return js["access_token"], (new_rt if new_rt and new_rt != refresh_token else None)
 
 
 def microsoft_token(tenant_id: str, client_id: str, client_secret: str) -> str:
@@ -321,6 +352,10 @@ def google_token(client_id: str, client_secret: str, refresh_token: str) -> str:
         "Google")
 
 
+TLS_MODES = ("SSL", "STARTTLS")
+_IMAP_ERROR = imaplib.IMAP4.error      # giữ tham chiếu: test thay imaplib.IMAP4 bằng lớp giả
+
+
 class ImapMailbox:
     """
     Hộp mail IMAP chỉ đọc. Dùng: with ImapMailbox(...) as mb: mb.message_ids_since(7) / mb.fetch(uid)
@@ -328,18 +363,25 @@ class ImapMailbox:
     auth:
       'password'                       đăng nhập user + mật khẩu (mail công ty, App Password của Gmail/Yahoo)
       'oauth2_microsoft' / 'oauth2_google'   AUTHENTICATE XOAUTH2 với token lấy từ `token_provider()`
+    tls_mode: 'SSL' (IMAPS, cổng 993 — mặc định) | 'STARTTLS' (IMAP thường rồi nâng TLS, thường cổng 143).
+    label: phần trước '/' của `name` (khóa `email_messages.mailbox`); mặc định = user đăng nhập.
     """
 
     def __init__(self, host: str, port: int, user: str, password: str | None = None,
-                 folder: str = "INBOX", timeout: int = 60, auth: str = "password", token_provider=None):
+                 folder: str = "INBOX", timeout: int = 60, auth: str = "password", token_provider=None,
+                 tls_mode: str = "SSL", label: str | None = None):
         self.host, self.port, self.user, self.password = host, port, user, password
         self.folder, self.timeout = folder, timeout
         self.auth, self.token_provider = auth, token_provider
+        self.tls_mode = (tls_mode or "SSL").upper()
+        if self.tls_mode not in TLS_MODES:
+            raise MailError(f"tls_mode {tls_mode!r} không hợp lệ — chọn SSL hoặc STARTTLS")
+        self.label = label
         self.conn = None
 
     @property
     def name(self) -> str:
-        return f"{self.user}/{self.folder}"
+        return f"{self.label or self.user}/{self.folder}"
 
     def _login(self) -> None:
         if self.auth == "password":
@@ -348,23 +390,61 @@ class ImapMailbox:
             token = self.token_provider()
             self.conn.authenticate("XOAUTH2", lambda _challenge: xoauth2_string(self.user, token))
 
-    def __enter__(self):
+    def connect(self) -> "ImapMailbox":
+        """Kết nối + đăng nhập (chưa mở thư mục).
+
+        Máy chủ từ chối đăng nhập → MailLoginRefused; mạng / TLS lỗi → MailError;
+        lỗi lấy token (MailAuthExpired / MailError) đi thẳng ra ngoài.
+        """
+        import ssl
+        where = f"{self.host}:{self.port}"
         try:
-            self.conn = imaplib.IMAP4_SSL(self.host, self.port, timeout=self.timeout)
+            if self.tls_mode == "STARTTLS":
+                self.conn = imaplib.IMAP4(self.host, self.port, timeout=self.timeout)
+                self.conn.starttls(ssl_context=ssl.create_default_context())
+            else:
+                self.conn = imaplib.IMAP4_SSL(self.host, self.port, timeout=self.timeout)
+        except (_IMAP_ERROR, OSError) as e:
+            self._close()
+            raise MailError(f"Không kết nối được máy chủ mail {where} ({self.tls_mode}): {e}") from e
+        try:
             self._login()
-        except (imaplib.IMAP4.error, OSError) as e:
-            raise MailError(f"Không đăng nhập được IMAP {self.host}:{self.port} ({self.user}, "
-                            f"auth={self.auth}): {e}") from e
+        except _IMAP_ERROR as e:
+            self._close()
+            raise MailLoginRefused(f"Máy chủ mail {where} từ chối đăng nhập ({self.user}): {_imap_text(e)}") from e
+        except OSError as e:
+            self._close()
+            raise MailError(f"Mất kết nối máy chủ mail {where} khi đăng nhập ({self.user}): {e}") from e
+        except MailError:
+            self._close()
+            raise
+        return self
+
+    def select_readonly(self, folder: str) -> bool:
+        """EXAMINE 1 thư mục (chỉ đọc). Không có / không mở được → False."""
+        try:
+            typ, _ = self.conn.select(f'"{encode_folder(folder)}"', readonly=True)
+        except _IMAP_ERROR:
+            return False
+        return typ == "OK"
+
+    def __enter__(self):
+        self.connect()
         typ, data = self.conn.select(f'"{encode_folder(self.folder)}"', readonly=True)    # EXAMINE
         if typ != "OK":
+            self._close()
             raise MailError(f"Không mở được thư mục {self.folder!r}: {data}")
         return self
 
-    def __exit__(self, *exc):
+    def _close(self):
         try:
-            self.conn.logout()
+            if self.conn is not None:
+                self.conn.logout()
         except Exception:  # noqa: BLE001
             pass
+
+    def __exit__(self, *exc):
+        self._close()
 
     def _uid(self, *args):
         typ, data = self.conn.uid(*args)
@@ -395,3 +475,29 @@ class ImapMailbox:
             if isinstance(item, tuple):
                 return item[1]
         raise MailError(f"Không tải được mail UID {uid}")
+
+
+def _imap_text(e: Exception) -> str:
+    """Câu máy chủ IMAP trả (imaplib bọc bytes trong str: "b'[AUTHENTICATIONFAILED] ...'")."""
+    text = str(e)
+    m = re.fullmatch(r"b(['\"])(.*)\1", text, re.S)
+    return (m.group(2) if m else text)[:300]
+
+
+def check_login(host: str, port: int, user: str, folders: list, password: str | None = None,
+                tls_mode: str = "SSL", auth: str = "password", token_provider=None,
+                timeout: int = 30) -> tuple[list, list]:
+    """Đăng nhập thử + EXAMINE từng thư mục → (thư mục mở được, thư mục không có). Không đọc mail nào.
+
+    Lỗi đăng nhập ném như `ImapMailbox.connect` (MailLoginRefused / MailAuthExpired / MailError).
+    """
+    mb = ImapMailbox(host, port, user, password, timeout=timeout, auth=auth, token_provider=token_provider,
+                     tls_mode=tls_mode)
+    mb.connect()
+    opened, missing = [], []
+    try:
+        for f in folders:
+            (opened if mb.select_readonly(f) else missing).append(f)
+    finally:
+        mb._close()
+    return opened, missing
