@@ -317,6 +317,10 @@ python -X utf8 web/weinvoice_worker.py [--once]   # cần WEINVOICE_STORAGE_ROOT
 # Tải PDF cho XML có sẵn trên đĩa (không cần DB, không gọi GDT)
 python -X utf8 web/fetch_pdf.py --company 1201496252 [--dry-run] [--mst-tcgp X] [--seller MST] [--limit N] [--force]
 
+# Tải XML từ GDT cho danh sách HĐ bán ra thiếu XML (CSV xuất từ WeTax, 09/11) → thư mục, không ghi DB.
+# MST tự thêm số 0 đầu; ký hiệu ký tự thứ 4 = M → sco-query; file đã có thì bỏ qua; kết quả ở <out>/_ket_qua.csv
+# Lưu <out>/<MST>/<năm>/<tháng>/<mẫu>_<ký hiệu>_<số>.xml; CSV nhiều công ty được (mỗi công ty dùng token riêng)
+python -X utf8 web/fetch_missing_xml.py --csv docs/_missing_0318793907_2026.csv --out docs/xml [--mst X] [--year 2026] [--month 8|2026-08] [--limit N] [--dry-run]
 
 # Lịch chạy tự động (Windows Task Scheduler, mặc định 06:30 / 12:30 / 19:00)
 powershell -ExecutionPolicy Bypass -File scripts\register_invoice_tasks.ps1
