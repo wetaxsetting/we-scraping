@@ -34,7 +34,7 @@ PROD_MODELS = {
     "g_180x50_vn": "adapter vninvoice (VN-Invoice)",
 }
 PACKAGES = ["torch", "numpy", "cv2", "PIL", "yaml", "requests", "psycopg2",
-            "dotenv", "openpyxl", "fitz", "playwright", "skia", "ddddocr"]
+            "dotenv", "openpyxl", "fitz", "playwright", "skia", "ddddocr", "cryptography"]
 ENV_REQUIRED = ["DATABASE_URL"]
 ENV_OPTIONAL = ["INVOICE_MAIL_USER", "INVOICE_MAIL_AUTH", "INVOICE_OUTPUT_DIR",
                 "INVOICE_LIST_SOURCE"]
