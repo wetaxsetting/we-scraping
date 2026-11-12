@@ -317,6 +317,7 @@ python -X utf8 web/weinvoice_worker.py [--once]   # cần WEINVOICE_STORAGE_ROOT
 # Tải PDF cho XML có sẵn trên đĩa (không cần DB, không gọi GDT)
 python -X utf8 web/fetch_pdf.py --company 1201496252 [--dry-run] [--mst-tcgp X] [--seller MST] [--limit N] [--force]
 
+
 # Lịch chạy tự động (Windows Task Scheduler, mặc định 06:30 / 12:30 / 19:00)
 powershell -ExecutionPolicy Bypass -File scripts\register_invoice_tasks.ps1
 
@@ -386,7 +387,10 @@ Code tách 2 hàm chính: `run_xml_step` (bước 2–4: GDT → XML, lệnh `xm
    khi hết hạn hoặc gặp 401.
 3. **Danh sách (lấy nguyên danh sách trước, rồi mới tải XML):** mỗi loại HĐ 1 file Excel như nút
    "Xuất Excel" của cổng (từ 20/10; `INVOICE_LIST_SOURCE=json` = API phân trang cũ), file gốc lưu
-   `output/list/`. GDT từ chối xuất hoặc file không đúng mẫu → khoảng đó tự lấy lại qua API JSON.
+   `output/list/`. **Từ 09/11 (theo user) không lùi về API JSON nữa**: GDT từ chối xuất hoặc file không đúng mẫu →
+   loại HĐ đó dừng trong lượt, mốc đồng bộ không dời, lượt sau lấy lại khoảng đó (JSON 50 HĐ/trang không theo nổi; MTT
+   còn cần 1 captcha mỗi trang). Trước đó có đường lùi này nhưng 1.736 lượt trong `job_runs` chưa lượt nào dùng tới.
+   `INVOICE_LIST_SOURCE=json` vẫn ép JSON cho HĐ có mã / không mã (không bao giờ cho MTT).
    Luôn quét lại 30 ngày gần nhất, cộng phần còn hở theo `sync_cursors`; ngày 5 và 15 tự quét lại
    tháng trước. HĐ đã có thì bỏ qua, HĐ mới vào hộp chờ (task `xml`). Task xong = `done`, không bao giờ
    được lấy lại. HĐ `hthdon=2` (chỉ API JSON có trường này) thì không tạo task tải, để ở `no_source`/`summary_only`.
@@ -456,9 +460,23 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
 - Mọi request phải có header `request-id` (UUID), thiếu là bị 403 "hành vi không hợp lệ".
 - Query hóa đơn mua vào phải có `ttxly` (5 = có mã, 6 = không mã, 8 = MTT). MTT dùng `/sco-query/`, và từ 10/2026
   mọi request danh sách/xuất Excel `sco-query` phải kèm `ckey`+`cvalue` (captcha GDT, `api_client.sco_captcha`).
+  **Đo thật 09/11:** thiếu captcha → 500 "Required request parameter 'ckey'"; captcha sai → **401 "Mã captcha không đúng."**
+  (trước đó code coi 401 này là hết phiên và đăng nhập lại; đã sửa bằng `_is_wrong_captcha`). Mỗi trang JSON (50 HĐ) cần
+  1 captcha mới; xuất Excel thì 1 captcha cho cả khoảng ngày (0318793907 tháng 10: bán MTT 62.943 HĐ, mua MTT 111 HĐ).
+  export-xml của HĐ MTT có cần captcha không: chưa kiểm thật.
 - Khoảng tìm kiếm ≤ 30 ngày **và** ≤ 1 tháng lịch (31/01→01/03 bị từ chối dù chỉ 30 ngày).
 - **`tdlap` là giờ UTC.** Luôn đổi qua `api_client.tdlap_vn()`, nếu không HĐ ngày 1 sẽ bị xếp nhầm sang tháng trước.
 - Username đăng nhập (vd `1201496252-U002`) có thể khác MST: DB tách `company_mst` và `gdt_username`.
+- **Thuế khóa tài khoản sau 5 lần sai mật khẩu** ("Tài khoản đã bị khoá vì đã nhập sai thông tin quá số lần quy định").
+  04–10/11 đã khóa 3 tài khoản (3600823561-U002, 3603512483 dùng cho 3603512483-001, 0318793907): `authenticate_auto` dừng
+  đúng sau 1 lần sai, nhưng **mỗi lượt sau lại thử đúng mật khẩu sai đó** (`tick` + `sync-lists` + `sweep`, worker XML mỗi 15 phút).
+  Sửa 10/11: `api_client.classify_login_failure` → chỉ **sai captcha** mới thử lại; sai mật khẩu / bị khóa ghi `gdt_login_blocks`
+  (`gdt_login_guard.py`, mỗi mật khẩu bị từ chối 1 dòng, vân tay HMAC, không lưu mật khẩu) → mọi lượt sau dùng đúng mật khẩu đó
+  **không gọi Thuế** (`TokenProvider._login`, `internal_api` login-test). Mật khẩu mới (sửa `.env` / cập nhật trên WeInvoice) thì
+  được thử; mật khẩu lấy từ WeInvoice bị từ chối → `winv_cmpn_infm.conn_stts='ERROR'` + câu của Thuế (màn Kết nối hiện lỗi).
+  Xem / bỏ chặn: `invoice_job.py login-blocks`, `unblock-login --mst X` (bỏ chặn **và bật lại** `companies.active`). 3 tài khoản
+  trên đã chặn + `active=false` 10/11 (máy khác dùng chung DB còn chạy code cũ, chỉ tôn trọng `active`) → mở khóa/đổi mật khẩu
+  xong thì `unblock-login`. Máy nào chạy job phải cập nhật code mới, nếu không vẫn thử lại mật khẩu sai.
 - **`hthdon=2`** (HĐ không mã, gửi qua bảng tổng hợp): export-xml **luôn trả 500**. Job vẫn lưu phần
   đầu HĐ, còn XML/PDF lấy từ mail.
 - **File Excel danh sách thiếu `hthdon`** (chỉ 17–19 cột, API JSON có 150 trường). Nên HĐ không mã (`K...`)
@@ -471,16 +489,6 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
 - Ký hiệu HĐ: ký tự đầu `C` = có mã CQT (MCCQT 34 ký tự), `K` = không mã; ký tự thứ 4 là `M` = máy tính tiền.
 
 ## 2.6 Adapter PDF (`pdf_providers/`)
-- **Thuế khóa tài khoản sau 5 lần sai mật khẩu** ("Tài khoản đã bị khoá vì đã nhập sai thông tin quá số lần quy định").
-  04–10/11 đã khóa 3 tài khoản (3600823561-U002, 3603512483 dùng cho 3603512483-001, 0318793907): `authenticate_auto` dừng
-  đúng sau 1 lần sai, nhưng **mỗi lượt sau lại thử đúng mật khẩu sai đó** (`tick` + `sync-lists` + `sweep`, worker XML mỗi 15 phút).
-  Sửa 10/11: `api_client.classify_login_failure` → chỉ **sai captcha** mới thử lại; sai mật khẩu / bị khóa ghi `gdt_login_blocks`
-  (`gdt_login_guard.py`, mỗi mật khẩu bị từ chối 1 dòng, vân tay HMAC, không lưu mật khẩu) → mọi lượt sau dùng đúng mật khẩu đó
-  **không gọi Thuế** (`TokenProvider._login`, `internal_api` login-test). Mật khẩu mới (sửa `.env` / cập nhật trên WeInvoice) thì
-  được thử; mật khẩu lấy từ WeInvoice bị từ chối → `winv_cmpn_infm.conn_stts='ERROR'` + câu của Thuế (màn Kết nối hiện lỗi).
-  Xem / bỏ chặn: `invoice_job.py login-blocks`, `unblock-login --mst X` (bỏ chặn **và bật lại** `companies.active`). 3 tài khoản
-  trên đã chặn + `active=false` 10/11 (máy khác dùng chung DB còn chạy code cũ, chỉ tôn trọng `active`) → mở khóa/đổi mật khẩu
-  xong thì `unblock-login`. Máy nào chạy job phải cập nhật code mới, nếu không vẫn thử lại mật khẩu sai.
 
 Các adapter dưới đây đã thử thật trên XML thật (10/2026):
 

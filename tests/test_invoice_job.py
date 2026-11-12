@@ -769,6 +769,44 @@ def test_sco_export_retries_when_gdt_asks_for_ckey(monkeypatch, sco_caps):
     assert [p["ckey"] for p in sent] == ["k0", "k1"]
 
 
+class _HttpResp:
+    def __init__(self, status, body=None, content=b""):
+        self.status_code, self._body, self.content = status, body, content
+        self.ok = status < 400
+        self.text = str(body) if body is not None else ""
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("not json")
+        return self._body
+
+
+# Đo thật 09/11/2026: captcha sai → 401 "Mã captcha không đúng." (không phải 400). Trước đó code coi
+# 401 là hết phiên → đăng nhập lại (tối đa 2 lần/lượt) thay vì xin ảnh captcha mới.
+WRONG_CAPTCHA = _HttpResp(401, {"message": "Mã captcha không đúng.", "path": "uri=/invoices/purchase"})
+
+
+def test_sco_list_401_wrong_captcha_is_not_auth(monkeypatch, sco_caps):
+    replies = [WRONG_CAPTCHA, _HttpResp(200, {"datas": [{"shdon": 1}], "total": 1})]
+    monkeypatch.setattr(api_client._gdt_session, "get", lambda *a, **k: replies.pop(0))
+    rows = api_client.fetch_invoices_subtype("t", "mua-mtt", "2026-10-01", "2026-10-31")
+    assert len(rows) == 1 and len(sco_caps) == 2
+
+
+def test_sco_export_401_wrong_captcha_is_not_auth(monkeypatch, sco_caps):
+    replies = [WRONG_CAPTCHA, _HttpResp(200, content=b"PK\x03\x04")]
+    monkeypatch.setattr(api_client._gdt_session, "get", lambda *a, **k: replies.pop(0))
+    assert api_client.export_invoice_list("t", "ban-mtt", "2026-10-01", "2026-10-31") == b"PK\x03\x04"
+    assert len(sco_caps) == 2
+
+
+def test_real_401_still_auth(monkeypatch, sco_caps):
+    monkeypatch.setattr(api_client._gdt_session, "get",
+                        lambda *a, **k: _HttpResp(401, {"message": "Phiên xác thực hết hạn"}))
+    with pytest.raises(api_client.GDTAuthError):
+        api_client.export_invoice_list("t", "ban-mtt", "2026-10-01", "2026-10-31")
+
+
 def test_sco_wrong_captcha_gives_up_after_limit(monkeypatch, sco_caps):
     def always_wrong(token, ep, params, timeout=60):
         raise RuntimeError("API GDT trả lỗi 400: captcha sai")

@@ -221,6 +221,21 @@ def _is_captcha_error(msg: str) -> bool:
     return any(kw in (msg or "").lower() for kw in _CAPTCHA_WORDS)
 
 
+def _api_message(r) -> str:
+    """Câu báo lỗi trong body JSON của GDT (không phải JSON → đoạn đầu body)."""
+    try:
+        body = r.json()
+        return str(body.get("message") or body.get("error") or "")
+    except Exception:
+        return (r.text or "")[:300]
+
+
+def _is_wrong_captcha(r) -> bool:
+    """sco-query: captcha sai → GDT trả 401 "Mã captcha không đúng." (đo 09/11/2026), không phải hết
+    phiên. Chỉ xét chữ "captcha" — `_CAPTCHA_WORDS` có "xác thực", dễ trùng câu báo hết phiên."""
+    return r.status_code in (401, 403) and "captcha" in _api_message(r).lower()
+
+
 def sco_captcha(max_retries: int = 4, delay: float = 1.0) -> dict:
     """
     Captcha cho sco-query (HĐ máy tính tiền) → {ckey, cvalue} gửi kèm làm query param.
@@ -303,6 +318,8 @@ def _do_get(token: str, ep: str, params: dict, timeout: int = 60) -> requests.Re
                              params=params, timeout=timeout)
     except requests.exceptions.Timeout:
         raise _TimeoutError(f"GDT không phản hồi sau {timeout}s")
+    if _is_wrong_captcha(r):
+        raise RuntimeError(f"API GDT trả lỗi {r.status_code}: {_api_message(r)}")
     if r.status_code in (401, 403):
         raise RuntimeError("__AUTH__Phiên đăng nhập hết hạn. Vui lòng đăng nhập lại.")
     if r.status_code == 429:
@@ -498,6 +515,8 @@ def _export_once(token: str, ep: str, params: dict, timeout: int) -> bytes:
         raise GDTError(f"GDT không phản hồi (timeout {timeout}s)", kind="network")
     except requests.exceptions.ConnectionError as e:
         raise GDTError(f"Lỗi kết nối GDT: {e}", kind="network")
+    if _is_wrong_captcha(r):
+        raise GDTError(f"GDT từ chối captcha ({r.status_code}): {_api_message(r)}", kind="other")
     if r.status_code in (401, 403):
         raise GDTAuthError()
     if r.status_code == 429:

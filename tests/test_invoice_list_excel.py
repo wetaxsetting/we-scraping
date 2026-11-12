@@ -349,13 +349,13 @@ def test_list_step_saves_original_file_then_reads_it(monkeypatch, excel_source):
     (_raise("other"), False),                                     # GDT từ chối xuất (404/500)
     (lambda *a: gdt_xlsx(["A", "B"], [[1, 2]]), True),            # file lạ: vẫn giữ để xem lại
 ])
-def test_list_step_falls_back_to_json_when_export_unusable(monkeypatch, excel_source, export, saved):
+def test_list_step_never_falls_back_to_json(monkeypatch, excel_source, export, saved):
+    """Excel lỗi → ném lỗi (lượt sau lấy lại), không gọi API JSON (09/11: JSON không theo nổi)."""
     monkeypatch.setattr(invoice_job.api_client, "export_invoice_list", export)
-    monkeypatch.setattr(invoice_job.api_client, "fetch_invoices_subtype",
-                        lambda tok, st, f, t: [{"nbmst": "0100112233", "khhdon": "C26TAA", "shdon": 1}])
-    stats = Counter()
-    rows = invoice_job.fetch_list(_Tokens(), "1201496252", "mua", START, END, stats)
-    assert rows[0]["shdon"] == 1 and stats["list_json_fallback"] == 1
+    monkeypatch.setattr(invoice_job.api_client, "fetch_invoices_subtype", _no_call)
+    for st in ("ban", "ban-khma", "mua", "mua-khma"):
+        with pytest.raises(api_client.GDTError):
+            invoice_job.fetch_list(_Tokens(), "1201496252", st, START, END, Counter())
     assert (excel_source / "list").exists() == saved
 
 
@@ -365,6 +365,33 @@ def test_list_step_does_not_hide_gdt_outage(monkeypatch, excel_source):
     monkeypatch.setattr(invoice_job.api_client, "fetch_invoices_subtype", _no_call)
     with pytest.raises(api_client.GDTError):
         invoice_job.fetch_list(_Tokens(), "1201496252", "mua", START, END, Counter())
+
+
+def test_mtt_list_never_falls_back_to_json(monkeypatch, excel_source):
+    """HĐ MTT: JSON cần 1 captcha / trang 50 HĐ → Excel lỗi thì ném lỗi (lượt sau lấy lại), không lùi JSON."""
+    monkeypatch.setattr(invoice_job.api_client, "export_invoice_list", _raise("other"))
+    monkeypatch.setattr(invoice_job.api_client, "fetch_invoices_subtype", _no_call)
+    for st in ("ban-mtt", "mua-mtt"):
+        with pytest.raises(api_client.GDTError):
+            invoice_job.fetch_list(_Tokens(), "1201496252", st, START, END, Counter())
+
+
+def test_failed_excel_window_is_retried_next_run(monkeypatch, excel_source):
+    """sync_lists: Excel lỗi → không dời mốc đồng bộ của sub-type đó → lượt sau lấy lại khoảng đó."""
+    monkeypatch.setattr(invoice_job.api_client, "export_invoice_list", _raise("other"))
+    monkeypatch.setattr(invoice_job.api_client, "fetch_invoices_subtype", _no_call)
+    store, stats = _BoxStore(), Counter()
+    invoice_job.sync_lists(store, {"company_mst": "1201496252"}, _Tokens(), ["mua"],
+                           lambda st: [(START, END)], invoice_job.job_policy.CircuitBreaker(), stats)
+    assert store.cursor == {} and store.box == [] and stats["sync_errors"] == 1
+
+
+def test_mtt_list_uses_excel_even_when_source_json(monkeypatch, excel_source):
+    monkeypatch.setenv("INVOICE_LIST_SOURCE", "json")
+    monkeypatch.setattr(invoice_job.api_client, "export_invoice_list", lambda tok, st, f, t: XLSX)
+    monkeypatch.setattr(invoice_job.api_client, "parse_invoice_list_excel", lambda data, st: [{"shdon": 7}])
+    monkeypatch.setattr(invoice_job.api_client, "fetch_invoices_subtype", _no_call)
+    assert invoice_job.fetch_list(_Tokens(), "1201496252", "ban-mtt", START, END, Counter()) == [{"shdon": 7}]
 
 
 def test_list_source_json_skips_excel(monkeypatch):

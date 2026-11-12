@@ -28,7 +28,8 @@ Cấu hình (biến môi trường hoặc file .env ở thư mục gốc project
     INVOICE_TYPES         mặc định "mua-all,ban-all"
     INVOICE_SAVE_ZIP      mặc định 1: lưu ZIP gốc từ GDT vào <output>/temp/ (cùng cấu trúc xml/)
     INVOICE_LIST_SOURCE   excel (mặc định): danh sách lấy bằng nút "Xuất Excel" của cổng, 1 request
-                          mỗi loại HĐ, file gốc lưu ở <output>/list/ | json: API danh sách phân trang
+                          mỗi loại HĐ, file gốc lưu ở <output>/list/; lỗi thì lượt sau lấy lại, không
+                          lùi JSON | json: API danh sách phân trang (không áp dụng cho HĐ MTT)
     INVOICE_MAIL_USER/HOST/PORT/FOLDER/DAYS   hộp mail hóa đơn (IMAP SSL; không có USER → bỏ bước mail)
     INVOICE_MAIL_AUTH     password (mặc định) | oauth2_microsoft | oauth2_google — xem .env.example
 
@@ -281,27 +282,24 @@ def list_path(out_dir: Path, company_mst: str, sub_type: str, start, end) -> Pat
 
 def fetch_list(tokens, company_mst: str, sub_type: str, start, end, stats) -> list:
     """
-    Danh sách HĐ 1 sub-type trong 1 khoảng ngày (≤ 30 ngày). Mặc định lấy file Excel như nút
-    "Xuất Excel" của cổng (1 request), lưu file gốc vào <out>/list/ rồi mới đọc.
-    GDT từ chối xuất / file không đúng mẫu → lấy lại khoảng đó qua API danh sách JSON.
+    Danh sách HĐ 1 sub-type trong 1 khoảng ngày (≤ 30 ngày) bằng file Excel như nút "Xuất Excel"
+    của cổng (1 request), lưu file gốc vào <out>/list/ rồi mới đọc.
+
+    KHÔNG lùi về API JSON khi Excel lỗi (09/11, theo user): JSON phân trang 50 HĐ/trang, không theo
+    nổi khối lượng thật, và HĐ MTT còn cần 1 captcha mỗi trang (0318793907 tháng 10/2026: 62.943 HĐ
+    bán MTT ≈ 1.259 captcha). Excel lỗi → ném lỗi, sync_lists dừng sub-type đó, mốc đồng bộ không
+    dời → lượt sau lấy lại khoảng đó. Chỉ dùng JSON khi đặt hẳn INVOICE_LIST_SOURCE=json (trừ MTT).
     """
-    if list_source() == "excel":
-        try:
-            data = call_gdt(tokens, lambda tok: api_client.export_invoice_list(
-                tok, sub_type, start.isoformat(), end.isoformat()))
-            try:
-                atomic_write(list_path(output_dir(), company_mst, sub_type, start, end), data)
-            except OSError as e:         # file đang mở trong Excel... → không chặn việc lấy danh sách
-                log.warning("[%s] không lưu được file danh sách %s: %s", company_mst, sub_type, e)
-            return api_client.parse_invoice_list_excel(data, sub_type)
-        except GDTError as e:
-            if e.kind not in ("other", "bad_content"):
-                raise
-            stats["list_json_fallback"] += 1
-            log.warning("[%s] xuất Excel %s %s→%s không dùng được (%s): %s → lấy qua API JSON",
-                        company_mst, sub_type, start, end, e.kind, e)
-    return call_gdt(tokens, lambda tok: api_client.fetch_invoices_subtype(
+    if list_source() == "json" and not sub_type.endswith("-mtt"):
+        return call_gdt(tokens, lambda tok: api_client.fetch_invoices_subtype(
+            tok, sub_type, start.isoformat(), end.isoformat()))
+    data = call_gdt(tokens, lambda tok: api_client.export_invoice_list(
         tok, sub_type, start.isoformat(), end.isoformat()))
+    try:
+        atomic_write(list_path(output_dir(), company_mst, sub_type, start, end), data)
+    except OSError as e:                 # file đang mở trong Excel... → không chặn việc lấy danh sách
+        log.warning("[%s] không lưu được file danh sách %s: %s", company_mst, sub_type, e)
+    return api_client.parse_invoice_list_excel(data, sub_type)   # sai mẫu → GDTError bad_content, file gốc vẫn giữ
 
 
 def sync_lists(store, company, tokens, sub_types, windows_for, breaker, stats,
