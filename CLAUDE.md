@@ -766,6 +766,13 @@ Thứ tự đúng (mỗi bước đều kiểm được, đừng bỏ bước ki
    Start in = thư mục dự án, **không nháy** (có nháy → `0x8007010B` "directory name is invalid").
    Kiểm bằng `(Get-ScheduledTask -TaskName X).Actions | Format-List Execute,Arguments,WorkingDirectory`.
 
+**Schema DB (đã chạy 12/11):** gom 17 bảng engine từ `public` sang `weinvoice` (cạnh 11 bảng `winv_*`) bằng
+`ALTER TABLE … SET SCHEMA` + `ALTER DATABASE wetax_scraping SET search_path = weinvoice` — code engine gọi tên bảng trần nên
+**không sửa `.env`/code máy nào**, máy chạy code cũ cũng không tạo lại bảng rỗng trong `public`. Phải dừng hết engine + backend
+trước (kết nối cũ giữ `search_path` cũ), sau đó backend đặt `WECMS_WEINVOICE_ENGINE_SCHEMA=weinvoice`. Script + các bước:
+`we-invoice/we-scraping-api/docs/sql/2026/move-engine-tables-to-weinvoice-schema-2026-11-12.sql`. `scripts/check_setup.py` in
+`search_path` và báo lỗi nếu thấy bảng engine bị tạo lại trong `public`.
+
 Thứ **không** có trong repo và không cần cho job: `env/` (dữ liệu train), `env_pass/`, `output/`,
 `example/`. Job chỉ cần `configs/groups.yaml` + `runs/<nhóm>/best.pt`.
 Nhớ **cửa sổ mail 7 ngày** (mục 2.7): lịch 3 lần/ngày là dư, nhưng nếu server tắt quá 1 tuần thì

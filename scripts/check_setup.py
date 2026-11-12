@@ -162,9 +162,14 @@ else:
         import psycopg2
 
         with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
-            cur.execute("select 1")
-            cur.fetchone()
-        ok("ket noi duoc")
+            cur.execute("select current_setting('search_path'), to_regclass('invoices')::text,"
+                        " (select count(*) from pg_tables where schemaname = 'public'"
+                        "   and tablename in ('invoices', 'tasks', 'companies'))")
+            path, invoices, left_in_public = cur.fetchone()
+        ok(f"ket noi duoc (search_path = {path}; bang invoices = {invoices or 'chua co, chay init-db'})")
+        if invoices and invoices.startswith("weinvoice.") and left_in_public:
+            bad("con bang engine trong schema public ben canh weinvoice",
+                "1 may chay code/ket noi cu da tao lai bang trong public — xem docs/sql cua api, muc chuyen schema 12/11")
     except Exception as exc:                       # noqa: BLE001
         bad(f"khong ket noi duoc: {type(exc).__name__}",
             "kiem DATABASE_URL, firewall, PostgreSQL da chay chua")
