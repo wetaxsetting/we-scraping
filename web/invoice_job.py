@@ -75,7 +75,7 @@ import pdf_providers                              # noqa: E402
 import weinvoice_bridge                           # noqa: E402
 import xml_parser                                 # noqa: E402
 from api_client import GDTAuthError, GDTError     # noqa: E402
-from invoice_store import InvoiceStore            # noqa: E402
+from invoice_store import InvoiceStore, is_connection_error  # noqa: E402
 from pdf_providers import PdfFetchError           # noqa: E402
 
 log = logging.getLogger("invoice_job")
@@ -988,6 +988,35 @@ WORKER_BATCH = 200          # tổng HĐ mỗi mẻ
 WORKER_IDLE_SECONDS = 60    # hộp chờ rỗng → ngủ chừng này rồi xem lại
 COOLDOWN_MINUTES = 15       # công ty không đăng nhập được / GDT lỗi liên tiếp → nghỉ
 DEFER_MINUTES = 10          # site NCC đang ngắt mạch → hẹn task lại sau
+DB_RETRY_FIRST = 5          # mất kết nối DB → chờ chừng này giây rồi nối lại, mỗi lần trượt gấp đôi
+DB_RETRY_MAX = 300          # ... tối đa chừng này giây giữa 2 lần thử
+
+
+class DbConnectionLost(Exception):
+    """Worker mất kết nối DB giữa mẻ: task mẻ đó và dòng job_runs đang mở chưa trả/đóng được."""
+
+    def __init__(self, task_ids: list, run_id):
+        super().__init__(f"mất kết nối DB ({len(task_ids)} task đang chạy dở)")
+        self.task_ids = task_ids
+        self.run_id = run_id
+
+
+def wait_for_db(store, *, first: float = DB_RETRY_FIRST, max_wait: float = DB_RETRY_MAX,
+                sleep=time.sleep) -> int:
+    """Nối lại DB tới khi được (máy chủ DB khởi động lại thường mất vài chục giây). Trả số lần thử."""
+    delay, tries = first, 0
+    while True:
+        sleep(delay)
+        tries += 1
+        try:
+            store.reconnect()
+        except Exception as e:  # noqa: BLE001 — DB chưa lên: thử lại, không làm chết worker
+            log.warning("Nối lại DB lần %d chưa được (%s: %s) → thử lại sau %d s",
+                        tries, type(e).__name__, str(e).strip()[:200], min(delay * 2, max_wait))
+            delay = min(delay * 2, max_wait)
+            continue
+        log.info("Đã nối lại DB sau %d lần thử", tries)
+        return tries
 
 
 def run_worker(store, task_type: str, out_dir: Path, *, per_company: int = WORKER_PER_COMPANY,
@@ -1062,24 +1091,53 @@ def run_worker(store, task_type: str, out_dir: Path, *, per_company: int = WORKE
                 run.save(mst)
             claimed = []
         return 0
-    except BaseException:
+    except BaseException as e:
+        ids = [t["task_id"] for t in claimed]
+        if isinstance(e, Exception) and is_connection_error(e):
+            # Kết nối chết: chưa trả task / đóng lượt được → để người gọi làm sau khi nối lại
+            run_id, run.run_id = run.run_id, None
+            raise DbConnectionLost(ids, run_id) from e
         # Ctrl+C / lỗi bất ngờ: trả mọi task mẻ này còn 'running' (task đã xong không bị đụng)
-        store.release_tasks([t["task_id"] for t in claimed])
+        store.release_tasks(ids)
         run.close("error")
         raise
     finally:
         run.close()
 
 
-def cmd_worker(store, args) -> int:
+def cmd_worker(store, args, *, wait=wait_for_db) -> int:
     log.info("Worker %s bắt đầu (mỗi công ty %d HĐ/mẻ, tối đa %d HĐ/mẻ)%s",
              args.type, args.per_company, args.batch, ", chạy tới khi hộp chờ rỗng" if args.once else "")
-    try:
-        return run_worker(store, args.type, output_dir(), per_company=args.per_company,
-                          batch=args.batch, idle=args.idle, once=args.once)
-    except KeyboardInterrupt:
-        log.info("Worker %s dừng (Ctrl+C)", args.type)
-        return 0
+    unreleased: list = []           # task / lượt bỏ dở lúc mất DB, trả lại sau khi nối được
+    open_runs: list = []
+    while True:
+        try:
+            if unreleased:
+                store.release_tasks(unreleased)
+                unreleased = []
+            while open_runs:
+                store.finish_run(open_runs[0], "error", {"db_connection_lost": 1})
+                open_runs.pop(0)
+            return run_worker(store, args.type, output_dir(), per_company=args.per_company,
+                              batch=args.batch, idle=args.idle, once=args.once)
+        except KeyboardInterrupt:
+            log.info("Worker %s dừng (Ctrl+C)", args.type)
+            return 0
+        except Exception as e:
+            # Máy chủ DB khởi động lại / rớt mạng (16/11/2026 cả 3 worker chết vì việc này):
+            # nối lại rồi chạy tiếp thay vì thoát (Task Scheduler không bật lại tiến trình thoát mã 1)
+            if isinstance(e, DbConnectionLost):
+                unreleased += e.task_ids
+                if e.run_id is not None:
+                    open_runs.append(e.run_id)
+                cause = e.__cause__
+            elif is_connection_error(e):
+                cause = e
+            else:
+                raise
+            log.error("Worker %s mất kết nối DB (%s: %s) → chờ nối lại", args.type,
+                      type(cause).__name__, str(cause).strip()[:200])
+            wait(store)
 
 
 def cmd_sweep(store, args) -> int:

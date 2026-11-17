@@ -56,7 +56,7 @@ import mail_reader                                # noqa: E402
 import pdf_providers                              # noqa: E402
 import weinvoice_bridge                           # noqa: E402
 import xml_parser                                 # noqa: E402
-from invoice_store import InvoiceStore            # noqa: E402
+from invoice_store import InvoiceStore, is_connection_error  # noqa: E402
 from psycopg2.extras import Json                  # noqa: E402
 
 log = logging.getLogger("weinvoice_worker")
@@ -65,6 +65,7 @@ ENGINE_USER = "engine"
 TYPES = ("SYNC", "FETCH_XML", "FETCH_PDF", "IMPORT", "TEST_DATA", "MAIL_SCAN")
 POLL_SECONDS = 5.0
 STALE_MINUTES = 180             # RUNNING không cập nhật quá lâu = worker chết giữa chừng
+DB_LOST_MESSAGE = "Engine mất kết nối cơ sở dữ liệu giữa chừng — vui lòng chạy lại"
 XML_BATCH = 5                   # mỗi mẻ XML ngắn để kiểm tra hủy thường xuyên
 MAX_MONTHS = 24
 ZIP_MAX_MEMBERS = 2000
@@ -786,6 +787,7 @@ class Worker:
                          "FETCH_PDF": self.do_fetch_pdf, "IMPORT": self.do_import,
                          "TEST_DATA": self.do_test_data, "MAIL_SCAN": self.do_mail_scan}
         self._next_mail_check = 0.0
+        self._interrupted: list = []    # (rqst_seq, progress, run_id) bỏ dở vì mất DB, đóng sau khi nối lại
 
     # -- vòng chạy ---------------------------------------------------------
     def run_one(self) -> bool:
@@ -794,6 +796,16 @@ class Worker:
             return False
         job = Job(self.reqs, row)
         log.info("WeInvoice #%s %s MST %s bắt đầu", job.id, row["rqst_type"], job.mst)
+        try:
+            self._handle(job, row)
+        except Exception as e:
+            if is_connection_error(e):
+                # DB rớt: không ghi được kết quả bây giờ → run() nối lại rồi đóng yêu cầu này
+                self._interrupted.append((job.id, dict(job.progress) or None, job.run_id))
+            raise
+        return True
+
+    def _handle(self, job: Job, row: dict) -> None:
         try:
             status, result = self.handlers[row["rqst_type"]](job)
             self.reqs.finish(job.id, status, result, None, job.run_id)
@@ -809,16 +821,34 @@ class Worker:
             self.reqs.finish(job.id, "FAILED", dict(job.progress) or None, str(e), job.run_id)
             log.warning("WeInvoice #%s thất bại: %s", job.id, e)
         except Exception as e:  # noqa: BLE001 — 1 yêu cầu lỗi không được làm chết worker
+            if is_connection_error(e):
+                raise                           # run() nối lại DB rồi mới ghi được
             log.exception("WeInvoice #%s lỗi", job.id)
             self.reqs.finish(job.id, "FAILED", dict(job.progress) or None, f"Lỗi engine: {type(e).__name__}: {e}",
                              job.run_id)
-        return True
 
-    def run(self, once: bool = False, poll: float = POLL_SECONDS) -> int:
+    def run(self, once: bool = False, poll: float = POLL_SECONDS, *, wait=invoice_job.wait_for_db) -> int:
+        while True:
+            try:
+                return self._run(once, poll)
+            except Exception as e:
+                # Máy chủ DB khởi động lại / rớt mạng (16/11/2026 worker chết vì việc này): nối lại, chạy tiếp
+                if not is_connection_error(e):
+                    raise
+                log.error("WeInvoice worker mất kết nối DB (%s: %s) → chờ nối lại",
+                          type(e).__name__, str(e).strip()[:200])
+                wait(self.store)
+
+    def _run(self, once: bool, poll: float) -> int:
         if not self.reqs.available():
             log.error("Không thấy bảng %s.winv_engn_rqst — WeInvoice chưa dựng trên DB này",
                       self.reqs.s)
             return 1
+        while self._interrupted:
+            rid, progress, run_id = self._interrupted[0]
+            self.reqs.finish(rid, "FAILED", progress, DB_LOST_MESSAGE, run_id)
+            log.warning("WeInvoice #%s bỏ dở vì mất kết nối DB → FAILED", rid)
+            self._interrupted.pop(0)
         n = self.reqs.fail_stale()
         if n:
             log.warning("WeInvoice: %d yêu cầu RUNNING bị bỏ dở → FAILED", n)

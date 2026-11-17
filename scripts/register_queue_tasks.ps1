@@ -18,7 +18,8 @@
   May khong chay WeInvoice: them -NoWeInvoice.
 
   Worker / API khong co gioi han thoi gian chay, khoi dong cung may (-RunWhenLoggedOff) hoac khi
-  dang nhap (mac dinh), va duoc Task Scheduler bat lai sau 1 phut neu thoat voi loi.
+  dang nhap (mac dinh). Them 1 trigger lap moi -WatchdogMinutes phut (mac dinh 5): dang chay thi bo qua
+  (IgnoreNew), da thoat (ke ca thoat ma 1) thi bat lai. Worker tu noi lai DB khi may chu DB khoi dong lai.
   Sau khi dang ky, script bat ngay cac task chay mai (bo qua bang -NoStart).
 
   Tren may chu BAT BUOC dung -RunWhenLoggedOff (LogonType S4U): mac dinh task chi chay khi
@@ -36,6 +37,7 @@
 param(
     [string[]]$ListTimes = @("06:00", "14:00", "22:00"),
     [int]$MailEveryMinutes = 30,
+    [int]$WatchdogMinutes = 5,
     [string]$Prefix = "Invoice",
     [string]$Python = "",
     [switch]$RunWhenLoggedOff,
@@ -123,8 +125,14 @@ Register-JobTask $names.Mail (New-JobAction "mail") $mailTrigger $mailSettings `
     "Doc mail hoa don (chi doc) -> khop XML/PDF vao HD"
 
 # 3-4. Worker: chay mai, chet thi bat lai sau 1 phut
-$workerTrigger = if ($RunWhenLoggedOff) { New-ScheduledTaskTrigger -AtStartup }
-                 else { New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME" }
+# RestartCount chi ap dung khi task KHONG KHOI DONG duoc; tien trinh chay roi thoat ma 1 (vd 16/11/2026
+# may chu DB khoi dong lai, ca 3 worker thoat) thi Task Scheduler coi la xong va khong bat lai.
+# -> them trigger lap moi -WatchdogMinutes phut: dang chay thi IgnoreNew bo qua, da chet thi bat lai.
+$startTrigger = if ($RunWhenLoggedOff) { New-ScheduledTaskTrigger -AtStartup }
+                else { New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME" }
+$watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes($WatchdogMinutes) `
+    -RepetitionInterval (New-TimeSpan -Minutes $WatchdogMinutes)
+$workerTrigger = @($startTrigger, $watchdogTrigger)
 $workerSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
@@ -144,8 +152,8 @@ if (-not $NoWeInvoice) {
 Write-Output "Da dang ky:"
 Write-Output "  $($names.Sync): $($ListTimes -join ', ')"
 Write-Output "  $($names.Mail): moi $MailEveryMinutes phut"
-Write-Output "  $($names.Xml), $($names.Pdf): chay mai"
-if (-not $NoWeInvoice) { Write-Output "  $($names.Api), $($names.Winv): chay mai" }
+Write-Output "  $($names.Xml), $($names.Pdf): chay mai (chet thi bat lai trong <= $WatchdogMinutes phut)"
+if (-not $NoWeInvoice) { Write-Output "  $($names.Api), $($names.Winv): chay mai (chet thi bat lai trong <= $WatchdogMinutes phut)" }
 Write-Output "Python: $Python"
 if ($RunWhenLoggedOff) {
     Write-Output "Che do: chay ca khi da dang xuat (S4U), worker khoi dong cung may"

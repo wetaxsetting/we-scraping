@@ -32,21 +32,65 @@ _LOGIN_LOCK_CLASS = 7311004
 _SCHEMA_SQL = Path(__file__).resolve().parent / "db" / "schema.sql"
 
 
+def is_connection_error(exc: BaseException | None) -> bool:
+    """Lỗi do mất kết nối PostgreSQL (máy chủ DB khởi động lại, rớt mạng), không phải lỗi câu lệnh.
+
+    InterfaceError = kết nối đã đóng; OperationalError không có SQLSTATE = rớt giữa chừng
+    ("server closed the connection unexpectedly") hoặc không nối được; SQLSTATE 08xxx / 57P0x =
+    lỗi kết nối / máy chủ đang tắt. Xét cả chuỗi `__cause__`/`__context__`: lỗi DB có thể bị
+    bọc trong lỗi khác. Hủy câu lệnh (57014), deadlock... không tính.
+    """
+    seen = 0
+    while exc is not None and seen < 6:
+        if isinstance(exc, psycopg2.InterfaceError):
+            return True
+        if isinstance(exc, psycopg2.OperationalError):
+            code = getattr(exc, "pgcode", None)
+            if code is None or code.startswith(("08", "57P")):
+                return True
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
+    return False
+
+
 class InvoiceStore:
     lock_key = _JOB_LOCK_KEY
 
     def __init__(self, dsn: str, schema: str | None = None):
-        self.conn = psycopg2.connect(dsn)
+        if schema and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
+            raise ValueError(f"Tên schema không hợp lệ: {schema!r}")
+        self._dsn = dsn
+        self._schema = schema
+        self.conn = None
+        self._connect()
+
+    def _connect(self) -> None:
+        self.conn = psycopg2.connect(self._dsn)
         self.conn.autocommit = False
-        if schema:
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
-                raise ValueError(f"Tên schema không hợp lệ: {schema!r}")
+        if self._schema:
             with self._tx() as cur:
-                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-                cur.execute(f"SET search_path TO {schema}")
+                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {self._schema}")
+                cur.execute(f"SET search_path TO {self._schema}")
+
+    def reconnect(self) -> None:
+        """Bỏ kết nối cũ (đã chết), mở kết nối mới. Lỗi nối → ném lên để người gọi thử lại.
+
+        Khóa advisory giữ trên kết nối cũ đã mất theo kết nối đó; ai cần khóa thì lấy lại.
+        """
+        old, self.conn = self.conn, None
+        if old is not None:
+            try:
+                old.close()
+            except Exception:  # noqa: BLE001 — kết nối đã chết, đóng lỗi cũng không sao
+                pass
+        self._connect()
+
+    def connection_lost(self, exc: BaseException | None) -> bool:
+        return is_connection_error(exc)
 
     def close(self) -> None:
-        self.conn.close()
+        if self.conn is not None:
+            self.conn.close()
 
     @contextmanager
     def _tx(self):
