@@ -585,6 +585,18 @@ mail đã kèm file; link `/xac-nhan-email/` **không bao giờ mở**); e-invoi
 (`invoice_from_link`) — user chọn giữ cả 2 đường (23/10). Người bán mới dùng cổng này: thêm MST vào `LEGACY_SELLERS`.
   `tt78hd.hilo.com.vn` dùng token kiểu khác (`1_C23TIH_927|MST`) — làm 26/10 (`decode_tt78hd_token`, link mail 2/2).
 
+**Mã / link tra cứu trong XML** (`xml_parser._guess_ma_tra_cuu`, `_find_lookup_url`, sửa 18/11): mã nhận tên trường TTKhac
+theo nghĩa sau khi bỏ dấu ("Mã số bí mật" Viettel, "Mã tra cứu"/"Số bảo mật" M-Invoice, VETC, "Mã tra cứu hóa đơn",
+`KeySearch`, `Matracuu`, `Hilo-SearchKey`, "Mã bảo mật", "ID tra cứu"…; danh sách tên cũ vẫn ưu tiên). Link ưu tiên trường
+link tra cứu trong TTKhac (`PortalLink`, `Trangtracuu`, "Link tra cứu người bán", `[DCTC]`/`[QRCODE]` của Thái Sơn; thêm
+`https://` khi thiếu), không thì URL đầu tiên trong XML **trừ** cổng Thuế và website công ty (`NBan/Website`, TTKhac
+`*Website*` — trừ khi tên miền là cổng hoá đơn, vd `vn.einvoice.grab.com`). Trước đó 15.775 XML có mã mà `ma_tra_cuu` trống
+(web gắn "!" cần mã) và ~4.900 link sai (3.935 cổng Thuế, ~1.000 website người bán, 17 link Thái Sơn cắt hỏng).
+`scripts/backfill_lookup_fields.py [--apply]` tính lại từ `parsed` (chỉ ĐIỀN mã khi trống; chạy thử in số HĐ đổi adapter):
+18/11 đã ghi 16.700 dòng, `ma_tra_cuu` 4.505 → 20.941. **Máy nào chạy job phải cập nhật code**, nếu không XML mới vẫn lưu
+theo cách cũ (chạy lại script là sửa). Còn 8.550 HĐ web gắn "!" chủ yếu là NCC không tra bằng mã (BKAV 3.808 — tra theo
+`DLHDon/@Id`, đều đã có PDF; Vĩnh Hy, VININVOICE) → cờ `needs_lookup_code` của backend cần tính theo NCC, chưa sửa.
+
 `pdf_providers/ocr_ddddocr.py`: nạp ddddocr dùng chung (ddddocr 1.6 `set_ranges` làm hỏng kết quả → mỗi adapter tự lọc ký tự).
 Kiểm chứng 23/10 đều bằng HĐ thật của công ty; PDF lấy được trùng nội dung với PDF đã có từ mail.
 

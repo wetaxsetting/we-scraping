@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import io
 import re
+import unicodedata
 import zipfile
 import xml.etree.ElementTree as ET
 from decimal import Decimal, InvalidOperation
@@ -258,7 +259,7 @@ def parse_xml_bytes(raw: bytes) -> dict:
     if hdon is None:
         raise ValueError(f"Không có thẻ HDon (thẻ gốc: {_ln(root.tag)})")
     result = _parse_hdon(hdon)
-    result["lookup_url"] = _find_lookup_url(xml_str)
+    result["lookup_url"] = _find_lookup_url(xml_str, result)
     return result
 
 
@@ -572,8 +573,36 @@ _MA_TRA_CUU_FIELDS = (
     "QuanLy_SoBaoMat", "SoBaoMat", "MaBaoMat", "LookupCode", "Fkey",
 )
 
-_URL_RE = re.compile(r"https?://[^\s<>\"']+")
-_URL_IGNORE = ("w3.org", "example.org", "xmlsoap.org", "uri.etsi.org")
+# URL dừng ở khoảng trắng, dấu nháy, thẻ XML và '[' (Thái Sơn gói link trong [DCTC]…[/DCTC] giữa các thẻ khác).
+_URL_RE = re.compile(r"https?://[^\s<>\"'\[\]]+")
+# Không phải trang tra cứu của NCC: namespace/chuẩn chữ ký, và cổng Thuế (chỉ tra tình trạng, không có bản gốc).
+_URL_IGNORE = ("w3.org", "example.org", "xmlsoap.org", "uri.etsi.org", "hoadondientu.gdt.gov.vn")
+
+# Tên trường TTKhac là mã tra cứu theo NGHĨA (đo trên 33.789 XML trong DB, 18/11): "Mã số bí mật" (Viettel),
+# "Mã tra cứu" / "Số bảo mật" (M-Invoice, VETC), "Mã tra cứu hóa đơn" (WinInvoice/eVAT), "KeySearch" (FAST),
+# "Matracuu" (SmartSign), "Hilo-SearchKey", "Mã bảo mật" (VN-Invoice), "ID tra cứu" (NC9)… — so sánh sau khi bỏ dấu.
+_CODE_NAME_RE = re.compile(
+    r"\b(ma (so )?tra cuu( hoa don)?|ma tc|id tra cuu|so bao mat|ma bao mat|ma (so )?bi mat"
+    r"|matracuu|keysearch|searchkey|hilo searchkey|searchinvoice)\b")
+# Trường TTKhac chứa link / tên miền trang tra cứu (có khi thiếu https://): "PortalLink" (HILO, Genuwin),
+# "Trangtracuu" (SmartSign), "Link tra cứu người bán" (Viettel), "DC TC" / "Địa chỉ tra cứu".
+_LINK_NAME_RE = re.compile(r"\b(portallink|portal link|trangtracuu|trang tra cuu|link tra cuu|dc tc|dia chi tra cuu|lookupurl)\b")
+# Website công ty (người bán / người mua) — không phải trang tra cứu
+_SITE_NAME_RE = re.compile(r"\b(website|comwebsite|comwebsitecty|sellerwebsite|buyerwebsite|web)\b")
+_DOMAIN_RE = re.compile(r"^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/\S*)?$", re.I)
+_BRACKET_LINK_RE = re.compile(r"\[(DCTC|QRCODE\d*)\](https?://[^\[\]\s]+)\[/\1\]", re.I)
+
+
+def _fold(s: str) -> str:
+    """Bỏ dấu, chữ thường, ký tự lạ → khoảng trắng: 'Mã số bí mật' → 'ma so bi mat'."""
+    s = unicodedata.normalize("NFD", str(s or "")).replace("đ", "d").replace("Đ", "D")
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn").lower()
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", s).split())
+
+
+def _looks_like_link(v: str) -> bool:
+    v = v.strip()
+    return bool(_URL_RE.match(v) or _DOMAIN_RE.match(v))
 
 
 def _guess_ma_tra_cuu(tt_khac: dict) -> str:
@@ -581,12 +610,76 @@ def _guess_ma_tra_cuu(tt_khac: dict) -> str:
         val = (tt_khac.get(field) or "").strip()
         if val:
             return val
+    for name, val in tt_khac.items():
+        val = str(val or "").strip()
+        if val and _CODE_NAME_RE.search(_fold(name)) and not _LINK_NAME_RE.search(_fold(name)) and not _looks_like_link(val):
+            return val
     return ""
 
 
-def _find_lookup_url(xml_str: str) -> str:
+def _as_url(v: str) -> str:
+    v = str(v or "").strip()
+    m = _URL_RE.match(v)
+    if m:
+        return m.group(0)
+    return "https://" + v if _DOMAIN_RE.match(v) else ""
+
+
+# Website mà tên miền là cổng hoá đơn (vd Grab ghi Website = vn.einvoice.grab.com, HILO evatfinance.hilo.com.vn)
+# vẫn là trang tra cứu — giữ.
+_PORTAL_HOST_RE = re.compile(r"invoice|hoadon|hddt|tracuu|hilo", re.I)
+
+
+def _usable(url: str, sites: set) -> bool:
+    if not url or any(bad in url for bad in _URL_IGNORE):
+        return False
+    if url.lower().rstrip("/") not in sites:
+        return True
+    host = re.sub(r"^https?://", "", url, flags=re.I).split("/", 1)[0]
+    return bool(_PORTAL_HOST_RE.search(host))
+
+
+def site_urls(parsed: dict) -> set:
+    """Website người bán / người mua (NBan/NMua Website, TTKhac *Website*) — chuẩn hoá để so khớp."""
+    out = set()
+    for party in ("nguoi_ban", "nguoi_mua"):
+        site = _as_url((parsed.get(party) or {}).get("website") or "")
+        if site:
+            out.add(site.lower().rstrip("/"))
+    for name, val in (parsed.get("tt_khac") or {}).items():
+        if _SITE_NAME_RE.search(_fold(name)) and not _LINK_NAME_RE.search(_fold(name)):
+            site = _as_url(val)
+            if site:
+                out.add(site.lower().rstrip("/"))
+    return out
+
+
+def lookup_url_from_ttkhac(tt_khac: dict, sites: set = frozenset()) -> str:
+    """Link tra cứu NCC ghi trong TTKhac: trường link tra cứu, hoặc [DCTC] / [QRCODE] của Thái Sơn."""
+    for name, val in tt_khac.items():
+        if _LINK_NAME_RE.search(_fold(name)):
+            url = _as_url(val)
+            if _usable(url, sites):
+                return url
+    for val in tt_khac.values():
+        m = _BRACKET_LINK_RE.search(str(val or ""))
+        if m and _usable(m.group(2), sites):
+            return m.group(2)
+    return ""
+
+
+def _find_lookup_url(xml_str: str, parsed: dict | None = None) -> str:
+    """
+    Link trang tra cứu bản gốc. Ưu tiên trường link tra cứu trong TTKhac; không có thì URL đầu tiên trong XML,
+    bỏ website công ty (NBan/Website, TTKhac *Website*) và cổng Thuế — trước 18/11 hàm này lấy luôn URL đầu tiên
+    nên ~3.900 HĐ lưu link cổng Thuế và ~1.000 HĐ lưu website người bán.
+    """
+    parsed = parsed or {}
+    sites = site_urls(parsed)
+    url = lookup_url_from_ttkhac(parsed.get("tt_khac") or {}, sites)
+    if url:
+        return url
     for m in _URL_RE.finditer(xml_str):
-        url = m.group(0)
-        if not any(bad in url for bad in _URL_IGNORE):
-            return url
+        if _usable(m.group(0), sites):
+            return m.group(0)
     return ""

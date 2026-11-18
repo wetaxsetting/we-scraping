@@ -243,3 +243,60 @@ def test_qr_chap_nhan_truong_rong_va_thieu_crc():
     raw = "000201" + "0200" + _tlv("99", _tlv("00", "") + _tlv("04", "00238805"))
     q = parse_qr(raw)
     assert q["crc_hop_le"] is None and q["tra_cuu"] == {"so_hd": "00238805"}
+
+
+# ---------------------------------------------------------------------------
+# Mã / link tra cứu bản gốc (18/11/2026): trước đó 15.775 XML có mã trong TTKhac mà ma_tra_cuu trống (tên trường
+# tiếng Việt: "Mã số bí mật", "Mã tra cứu"…), và lookup_url = URL đầu tiên trong XML → cổng Thuế / website người bán.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("tt, code", [
+    ({"Mã số bí mật": "8EMM9H144N92YSA", "Link tra cứu người bán": "sivoice.viettel.vn"}, "8EMM9H144N92YSA"),  # Viettel
+    ({"Website": "mylifegroup.vn", "Mã tra cứu": "10768914048H3Q7FXV"}, "10768914048H3Q7FXV"),                # M-Invoice
+    ({"Số bảo mật": "EE048951579A583D"}, "EE048951579A583D"),
+    ({"Mã tra cứu hóa đơn": "1D525A8F82", "Mã công ty": "CTY01"}, "1D525A8F82"),                            # WinInvoice
+    ({"KeySearch": "AQAAAKUU"}, "AQAAAKUU"),                                                                  # FAST
+    ({"Trangtracuu": "tracuuhd.smartsign.com.vn", "Matracuu": "26G33042866Y"}, "26G33042866Y"),              # SmartSign
+    ({"Hilo-SearchKey": "01K0THQ1AM7P32NRX9HPE53WMB"}, "01K0THQ1AM7P32NRX9HPE53WMB"),
+    ({"MTCuu": "EXACT", "Mã số bí mật": "SECOND"}, "EXACT"),            # danh sách cũ vẫn được ưu tiên
+    ({"Link tra cứu": "https://x.vn/a", "Ghi chú": "abc"}, ""),          # link không phải mã
+])
+def test_ma_tra_cuu_theo_ten_truong_tieng_viet(tt, code):
+    assert xml_parser._guess_ma_tra_cuu(tt) == code
+
+
+def test_link_tra_cuu_uu_tien_ttkhac_bo_website_va_cong_thue():
+    parsed = {"nguoi_ban": {"website": "https://ahamove.com/"},
+              "tt_khac": {"SellerWebsite": "http://www.wsivn.com/", "Trangtracuu": "tracuuhd.smartsign.com.vn"}}
+    xml = "<a>https://ahamove.com/ http://www.wsivn.com/ https://hoadondientu.gdt.gov.vn</a>"
+    assert xml_parser._find_lookup_url(xml, parsed) == "https://tracuuhd.smartsign.com.vn"
+    # không có trường link: bỏ website người bán và cổng Thuế, lấy URL kế tiếp
+    parsed["tt_khac"] = {}
+    xml = "<a>https://hoadondientu.gdt.gov.vn https://ahamove.com/ https://tracuu.ncc.vn/x?k=1</a>"
+    assert xml_parser._find_lookup_url(xml, parsed) == "https://tracuu.ncc.vn/x?k=1"
+    assert xml_parser._find_lookup_url("<a>https://ahamove.com/</a>", parsed) == ""
+
+
+def test_link_trong_ngoac_vuong_cua_thai_son_khong_bi_cat_sai():
+    ext = "[MaCN]123[/MaCN][DCTC]https://hddt.centralretail.com.vn/[/DCTC][TTDC]1[/TTDC]"
+    parsed = {"tt_khac": {"ExtHoaDon": ext}}
+    assert xml_parser._find_lookup_url(f"<a>{ext}</a>", parsed) == "https://hddt.centralretail.com.vn/"
+    assert xml_parser._find_lookup_url(f"<a>{ext}</a>", {}) == "https://hddt.centralretail.com.vn/"
+
+
+def test_parse_xml_bytes_lay_ma_va_link_tu_ttkhac():
+    xml = ("<HDon><DLHDon Id='x'><TTChung><KHMSHDon>1</KHMSHDon><KHHDon>C26TAA</KHHDon><SHDon>7</SHDon></TTChung>"
+           "<NDHDon><NBan><Ten>A</Ten><MST>0100000001</MST><Website>https://ban.example.vn</Website></NBan>"
+           "<NMua><Ten>B</Ten><MST>0100000002</MST></NMua></NDHDon>"
+           "<TTKhac><TTin><TTruong>Mã số bí mật</TTruong><DLieu>ABC123XYZ</DLieu></TTin>"
+           "<TTin><TTruong>Link tra cứu người bán</TTruong><DLieu>sinvoice.viettel.vn</DLieu></TTin></TTKhac>"
+           "</DLHDon></HDon>").encode()
+    out = parse_xml_bytes(xml)
+    assert out["ma_tra_cuu"] == "ABC123XYZ"
+    assert out["lookup_url"] == "https://sinvoice.viettel.vn"
+
+
+def test_website_la_cong_hoa_don_van_giu():
+    # Grab ghi Website = cổng hoá đơn của họ: vẫn là trang tra cứu
+    parsed = {"nguoi_ban": {"website": "https://vn.einvoice.grab.com"}, "tt_khac": {}}
+    assert xml_parser._find_lookup_url("<a>https://vn.einvoice.grab.com</a>", parsed) == "https://vn.einvoice.grab.com"
