@@ -594,8 +594,9 @@ link tra cứu trong TTKhac (`PortalLink`, `Trangtracuu`, "Link tra cứu ngư�
 (web gắn "!" cần mã) và ~4.900 link sai (3.935 cổng Thuế, ~1.000 website người bán, 17 link Thái Sơn cắt hỏng).
 `scripts/backfill_lookup_fields.py [--apply]` tính lại từ `parsed` (chỉ ĐIỀN mã khi trống; chạy thử in số HĐ đổi adapter):
 18/11 đã ghi 16.700 dòng, `ma_tra_cuu` 4.505 → 20.941. **Máy nào chạy job phải cập nhật code**, nếu không XML mới vẫn lưu
-theo cách cũ (chạy lại script là sửa). Còn 8.550 HĐ web gắn "!" chủ yếu là NCC không tra bằng mã (BKAV 3.808 — tra theo
-`DLHDon/@Id`, đều đã có PDF; Vĩnh Hy, VININVOICE) → cờ `needs_lookup_code` của backend cần tính theo NCC, chưa sửa.
+theo cách cũ (chạy lại script là sửa). Cờ "!" cần mã (`needs_lookup_code` của backend, `ProviderLookup`) từ 18/11 tính
+theo NCC: không gắn khi đã có PDF gốc hoặc NCC tra không cần mã (BKAV, Vĩnh Hy, Minh Khang, My Software, VININVOICE, Mắt Bão)
+→ 8.550 → ~4.200 HĐ (WeTax 1.604, FPT 1.437, VNPT 966 chưa có cổng riêng, …: đúng là cần mã / link nhập tay).
 
 `pdf_providers/ocr_ddddocr.py`: nạp ddddocr dùng chung (ddddocr 1.6 `set_ranges` làm hỏng kết quả → mỗi adapter tự lọc ký tự).
 Kiểm chứng 23/10 đều bằng HĐ thật của công ty; PDF lấy được trùng nội dung với PDF đã có từ mail.
