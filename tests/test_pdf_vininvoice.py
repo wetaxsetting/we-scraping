@@ -72,6 +72,17 @@ def test_ok_by_mccqt(monkeypatch):
     assert calls == [f"{vininvoice.API}/{MCCQT}/pdf"]
 
 
+def test_cash_register_mccqt_with_dashes(monkeypatch):
+    """HĐ máy tính tiền: MCCQT dạng M1-26-…, cổng nhận thẳng (thật 19/11: 1C26MAT-5682 của 0312639666)."""
+    mtt = "M1-26-CFY5S-00000005684"
+    calls = []
+    _setup(monkeypatch, calls, {f"{mtt}/pdf": _Resp(content=_pdf_with("So 00005682"))})
+    inv = dict(INV, shdon=5682, khhdon="C26MAT", nbmst="0312639666", ma_cqt=mtt)
+    assert vininvoice.VinInvoiceAdapter().fetch_pdf(inv).startswith(b"%PDF")
+    assert calls == [f"{vininvoice.API}/{mtt}/pdf"]
+    assert vininvoice.VinInvoiceAdapter.lookup_codes({"ma_cqt": "-bad-start"}) == []
+
+
 def test_code_first_then_mccqt(monkeypatch):
     calls = []
     _setup(monkeypatch, calls, {"94C2359A44624334/pdf": NOT_FOUND, f"{MCCQT}/pdf": _Resp(content=_pdf_with("So 14"))})

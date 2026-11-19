@@ -24,7 +24,7 @@ from .lookup_codes import lookup_codes
 
 BASE = "https://tracuu.suninvoice.vn"
 API = f"{BASE}/api/rest/s1/iam-entry/invoices"
-_CODE_RE = re.compile(r"^[A-Za-z0-9]{8,40}$")
+_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{7,39}$")   # MCCQT HĐ máy tính tiền có '-': M1-26-CFY5S-00000005684
 
 
 class SunInvoiceAdapter(PdfAdapter):

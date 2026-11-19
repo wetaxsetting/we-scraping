@@ -24,7 +24,7 @@ from .common import check_pdf_is_invoice, is_pdf, new_session, request
 
 BASE = "https://tracuu.vininvoice.vn"
 API = f"{BASE}/erp/rest/s1/iam-entry/invoices"
-_CODE_RE = re.compile(r"^[A-Za-z0-9]{8,40}$")
+_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{7,39}$")   # MCCQT HĐ máy tính tiền có '-': M1-26-CFY5S-00000005684
 
 
 class VinInvoiceAdapter(PdfAdapter):
