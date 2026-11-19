@@ -514,7 +514,7 @@ Các adapter dưới đây đã thử thật trên XML thật (10/2026):
 | `hilo`           | T-VAN HILO  | 0106713804             | TTKhac `Fkey` (cổng Grab)                        | SVG → ddddocr                                                                                                                                                                                                                                      |
 | `bkav`           | BKAV        | 0101360697             | `DLHDon/@Id` (InvoiceGUID) → `dlhdon_id`         | không                                                                                                                                                                                                                                              |
 | `vetc`           | VETC        | 0107500414, 0106858609 | TTKhac "Mã tra cứu"                              | không                                                                                                                                                                                                                                              |
-| `minvoice`       | M-INVOICE   | 0106026495 (+ -001)    | "Số bảo mật" / "Mã tra cứu" + MST bán            | không                                                                                                                                                                                                                                              |
+| `minvoice`       | M-INVOICE   | 0106026495 (+ -001)    | "Số bảo mật" / "Mã tra cứu" + MST bán; có tài khoản người bán thì `DLHDon/@Id` | **Cổng chung bắt reCAPTCHA v3 từ tuần 02/11/2026** (server kiểm: 400 "Thiếu token Google reCAPTCHA.", 0 PDF từ đó; 2.829 task 0108515678-001 thành `dead`) → không tài khoản thì `no_portal`. **19/11: đăng nhập tài khoản phát hành của người bán** `<MST>.minvoice.com.vn` (`MINVOICE_USER_/PASSWORD_<MST>`, tùy chọn `_DVCS_`/`_HOST_`): `Account/Login` → `Invoice68/PrintInvoice?id=<dlhdon_id>`, không ra thì tìm id ở `Pattern/GetData`. Endpoint đọc từ JS của trang, **chưa chạy thật** — có tài khoản thì `pdf --limit 3` xác nhận. Sai mật khẩu → `.minvoice_login_blocks.json`, không thử lại cùng mật khẩu. 0108515678-001 là **Cuckoo Vina CN HCM**: tài khoản phải xin Cuckoo |
 | `myinvoice`      | My Software | 0108971656             | MCCQT                                            | không                                                                                                                                                                                                                                              |
 | `visnam`         | Visnam      | 0401486901             | `QuanLy_SoBaoMat`                                | `g_1500x350`                                                                                                                                                                                                                                       |
 | `thaco`          | THACO (cổng riêng tập đoàn Trường Hải) | 3600252847 | TTKhac `DownloadPdf` (`getinvoice?token=` base64 mẫu_ký hiệu_số\|MST bán; phần mẫu nội bộ không suy được nên chỉ dùng link có sẵn) | không. Trả ZIP chứa PDF; không có `DownloadPdf` → `no_code` (form tra có captcha giống `g_194x35`, chưa làm). Thật 4/4 (23/10) |
@@ -677,6 +677,17 @@ Quy tắc khi viết adapter:
 - CMC Telecom (cinvoice.cmctelecom.vn, mã `CTEL.<32 hex>` trong mail):
   server **kiểm token reCAPTCHA thật** → không làm, lấy qua mail (không vượt reCAPTCHA). Nếu bỏ reCAPTCHA: CMC chỉ cần
   `POST /v1/invoice/lookup {invoiceNo, recaptchaToken}` → `{pdfContent, xmlContent}`.
+- **M-Invoice 0106026495 (+ -001) — TẠM DỪNG (19/11, theo user: "tìm cách khác / xin tài khoản sau").** Cổng tra cứu chung
+  bắt reCAPTCHA v3 từ tuần 02/11 (server kiểm, không vượt) → 0 PDF từ đó. Ảnh hưởng (đếm 19/11): bán ra 0108515678-001
+  (Cuckoo Vina CN HCM) 2.903 HĐ — 2.829 task `dead`, 74 `pending`; 3600790154 bán 903 + mua 42; 1101901122 bán 102 + mua 27;
+  mua vào các công ty khác ~80 (1201496252 đã có 137/146 PDF lấy trước 02/11). Mọi HĐ này đều đã có PDF Thuế (bản tạm).
+  19/11 sau đó trang trả 502/500 (`GetRecaptchaSiteKey` 500) — M-Invoice đang sửa cổng, chưa rõ có gỡ reCAPTCHA không.
+  Hướng đi: (1) tài khoản phát hành M-Invoice của người bán → adapter đã có nhánh đăng nhập (`MINVOICE_USER_/PASSWORD_<MST>`
+  trong .env; DB **không** lưu tài khoản NCC — `winv_cmpn_infm` chỉ có mật khẩu GDT, **không** dùng mật khẩu GDT thử
+  M-Invoice), chưa chạy thật; nếu làm cho nhiều khách thì nên lưu mã hoá trong DB như `gdt_pw_enc` (sửa cả engine/api/web);
+  (2) người bán tự xuất PDF hàng loạt từ M-Invoice rồi tải lên WeInvoice; (3) giữ PDF Thuế. M-Invoice gỡ reCAPTCHA thì
+  adapter tự lấy lại: `requeue --status dead --type pdf --mst-tcgp 0106026495-001` (khớp MSTTCGP chính xác, chạy cả với
+  `0106026495`).
 
 **Nguyên tắc:** chỉ viết adapter cho NCC có hóa đơn thật để thử (XML từ Thuế hoặc mã trong mail). Muốn thêm NCC
 → lấy thêm HĐ cũ (`main_auto.py --from ... --to ...`), xem `status` NCC nào nhiều HĐ nhất.

@@ -147,6 +147,12 @@ else:
         ok(f"mat khau GDT: {len(pw_keys)} khoa ({', '.join(sorted(pw_keys))})")
     else:
         print("  -    khong co HDT_PASSWORD_<MST> (MST ket noi tren WeInvoice dung mat khau trong DB)")
+    minv = sorted(k for k in os.environ if k.startswith("MINVOICE_USER_"))
+    if minv:
+        ok(f"tai khoan M-Invoice: {len(minv)} nguoi ban ({', '.join(k[len('MINVOICE_USER_'):] for k in minv)})")
+        for k in minv:
+            if not os.getenv("MINVOICE_PASSWORD_" + k[len("MINVOICE_USER_"):]):
+                bad(f"{k} co nhung thieu MINVOICE_PASSWORD_{k[len('MINVOICE_USER_'):]}", "dien vao .env")
     if os.getenv("HDT_PASSWORD"):
         bad("HDT_PASSWORD chung van con trong .env", "xoa dong nay: job khong dung nua (tung lam Thue khoa tai khoan)")
     for k in ENV_OPTIONAL:
