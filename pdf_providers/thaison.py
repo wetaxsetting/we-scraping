@@ -48,6 +48,17 @@ __RequestVerificationToken của form). Trang kết quả có form tải "/Downl
     thật thì tải được) → HĐ chuyển sang chỉ có dòng, không có file. HĐ 2023–2024 (C23TGN, C24TGN,
     C24TAA) không có ở HILO; einvoice.vn báo "Mã nhận hóa đơn không đúng"; grab.einvoice.vn/.com.vn 404.
 
+Cổng riêng thêm 19/11/2026 (khảo sát trên HĐ thật của công ty):
+  * saigonco-op.einvoice.com.vn / saigoncoop.einvoice.com.vn (Saigon Co.op 0301175691-…, Co.op FairPrice
+    0312263124; TTKhac "DC TC"/"ĐCTC") — kiểu "store" (CaptchaMvc → g_200x70). Trang kết quả không có
+    form tải: nút "Download HĐ" = window.location "/tai-ve-hoa-don/False/<mã>/<guid>" → ZIP như MM.
+    Host saigoncoop. (FairPrice) là bản cũ hơn: nút "Tải về" = form POST /tai-ve-hoa-don {token, idHoaDon}.
+  * hddt.centralretail.com.vn (Central Retail: GO!/Big C/Tops — EB Bình Dương 3702058398, Quốc tế
+    Đồng Nai 3600258976, An Lạc 0301472278, …) — kiểu "qr": KHÔNG captcha.
+      GET /vi-vn/tai-hoa-don-dien-tu/<MaTC> → ZIP {<mẫu>-<ký hiệu>-<số>.pdf, .xml có chữ ký, .html};
+      mã sai → ZIP rỗng (22 byte). Mã nằm trong TTKhac "ExtNMua": "[MaTC]D52B91BAC1[/MaTC]…" (XML không
+      có "Mã TC"); link QR /tra-cuu-hoa-don-dien-tu-qr/<MaTC> chỉ chuyển sang trang kết quả.
+
 Định tuyến: host của "DC TC"/"ĐCTC"/lookup_url → PORTALS; XML không ghi thì theo MST người bán
 (SELLER_PORTALS, MST chi nhánh "-001" dùng MST gốc). Không có cả hai → thử cổng chung einvoice.vn;
 không thấy ở đó → 'no_portal' (HĐ nằm chờ, bổ sung cổng rồi requeue --status no_source
@@ -90,6 +101,9 @@ PORTALS = {
     "invoice.kfcvietnam.com.vn": ("store_img", "https://invoice.kfcvietnam.com.vn"),
     "invoice.zaloplatforms.vn": ("store_img", "https://invoice.zaloplatforms.vn"),
     "hddt.cellphones.com.vn": ("store_js", "https://hddt.cellphones.com.vn"),
+    "saigonco-op.einvoice.com.vn": ("store", "https://saigonco-op.einvoice.com.vn"),
+    "saigoncoop.einvoice.com.vn": ("store", "https://saigoncoop.einvoice.com.vn"),
+    "hddt.centralretail.com.vn": ("qr", "https://hddt.centralretail.com.vn"),
 }
 
 # Người bán → host cổng, khi XML không ghi "DC TC".
@@ -117,8 +131,11 @@ _DETEXT_RE = re.compile(r'id="CaptchaDeText"[^>]*value="([0-9a-fA-F]{32})"')
 _TOKEN_RE = re.compile(r'name="__RequestVerificationToken" type="hidden" value="([^"]+)"')
 _GENERIC_ERR_RE = re.compile(r'fix-text-danger">([^<]*)<')
 _GENERIC_OK_RE = re.compile(r'id="IsCaptchaValid" value="true"', re.I)
-_STORE_GUID_RE = re.compile(r"/tai-ve-hoa-don/([0-9a-fA-F-]{36})")
-_STORE_DL_RE = re.compile(r'<form action="(/Download/DownloadFile)"[^>]*>(.*?)</form>', re.S)
+# MM: /tai-ve-hoa-don/<guid>; Saigon Co.op: /tai-ve-hoa-don/False/<mã>/<guid> (bản gốc, không ?printFlag)
+_STORE_GUID_RE = re.compile(r"(/tai-ve-hoa-don/(?:[A-Za-z0-9]+/)*[0-9a-fA-F-]{36})(?![?0-9a-fA-F-])")
+_BRACKET_CODE_RE = re.compile(r"\[MaTC\]\s*([A-Za-z0-9]{6,30})\s*\[/MaTC\]", re.I)
+# Form tải: /Download/DownloadFile (Cổng Vàng, KFC, …) hoặc /tai-ve-hoa-don (Co.op FairPrice) + idHoaDon
+_STORE_DL_RE = re.compile(r'<form action="(/Download/DownloadFile|/tai-ve-hoa-don)"[^>]*>(.*?)</form>', re.S)
 _STORE_ERR_RE = re.compile(r"Error:\s*(?:</strong>\s*)?([^<]+)<")
 _HIDDEN_RE = re.compile(r'<input\b[^>]*\bname="([^"]+)"[^>]*\bvalue="([^"]*)"')
 _CODE_RE = re.compile(r"^[A-Za-z0-9]{6,30}$")
@@ -291,7 +308,14 @@ class ThaisonAdapter(PdfAdapter):
 
     @staticmethod
     def lookup_code(invoice: dict) -> str:
-        return _tt(invoice, _CODE_KEYS) or str(invoice.get("ma_tra_cuu") or "").strip()
+        code = _tt(invoice, _CODE_KEYS) or str(invoice.get("ma_tra_cuu") or "").strip()
+        if code:
+            return code
+        for v in (invoice.get("tt_khac") or {}).values():      # Central Retail: ExtNMua "[MaTC]…[/MaTC]"
+            m = _BRACKET_CODE_RE.search(str(v or ""))
+            if m:
+                return m.group(1)
+        return ""
 
     @staticmethod
     def portal_for(invoice: dict) -> tuple[str | None, bool]:
@@ -323,7 +347,12 @@ class ThaisonAdapter(PdfAdapter):
         for attempt in range(1, tries + 1):
             s = new_session()
             try:
-                pdf = self._generic(s, base, code) if kind == "generic" else self._store(s, base, code, kind)
+                if kind == "generic":
+                    pdf = self._generic(s, base, code)
+                elif kind == "qr":
+                    pdf = self._qr(s, base, code)
+                else:
+                    pdf = self._store(s, base, code, kind)
                 break
             except _WrongCaptcha as e:
                 log.info("Thái Sơn %s: captcha lần %d không qua (%s)", host, attempt, e)
@@ -403,9 +432,8 @@ class ThaisonAdapter(PdfAdapter):
         text = r.text or ""
         g = _STORE_GUID_RE.search(text)
         dl = _STORE_DL_RE.search(text)
-        if g:                                 # MM Mega Market: link tải thẳng theo guid
-            d = request(s, "GET", f"{base}/tai-ve-hoa-don/{g.group(1)}", headers={"Referer": r.url or page},
-                        timeout=60)
+        if g:                                 # MM Mega Market / Saigon Co.op: link tải thẳng theo guid
+            d = request(s, "GET", base + g.group(1), headers={"Referer": r.url or page}, timeout=60)
         elif dl:                              # bản mới: form POST /Download/DownloadFile
             fields = {k: html.unescape(v) for k, v in _HIDDEN_RE.findall(dl.group(2))}
             if not fields.get("idHoaDon"):
@@ -422,6 +450,21 @@ class ThaisonAdapter(PdfAdapter):
                 raise _NotFound(msg)
             raise PdfFetchError(f"Thái Sơn ({base}) trả kết quả lạ (HTTP {r.status_code}): {msg}"[:300], "other")
         return _pdf_from_zip(d.content, base)
+
+    # --- Central Retail: tải ZIP thẳng theo mã, không captcha -------------------------------
+
+    @staticmethod
+    def _qr(s, base: str, code: str) -> bytes:
+        d = request(s, "GET", f"{base}/vi-vn/tai-hoa-don-dien-tu/{code}", timeout=60)
+        data = d.content or b""
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                empty = not z.namelist()
+        except zipfile.BadZipFile:
+            empty = False
+        if empty:                             # mã sai / không có HĐ → ZIP rỗng (22 byte)
+            raise _NotFound(f"ZIP rỗng cho mã {code}")
+        return _pdf_from_zip(data, base)
 
 
 register(ThaisonAdapter())

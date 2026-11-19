@@ -538,3 +538,100 @@ def test_registered_and_routed():
     assert pdf_providers.adapter_for_mst_tcgp("0101300842") is adapter
     assert pdf_providers.adapter_for_host("einvoice.mmvietnam.com") is adapter
     assert pdf_providers.adapter_for_host("invoice.zaloplatforms.vn") is adapter
+
+
+# ---------------------------------------------------------------- cổng riêng 19/11: Saigon Co.op, Central Retail
+COOP = "https://saigonco-op.einvoice.com.vn"
+FAIR = "https://saigoncoop.einvoice.com.vn"
+CR = "https://hddt.centralretail.com.vn"
+COOP_GUID = "70a25998-b369-4fe9-b915-e44f86c17176"
+COOP_OK = _Resp('<script>function downloadFile() { window.location.href = '
+                f'"/tai-ve-hoa-don/False/19CEKRV9LRI/{COOP_GUID}"; }}\n'
+                'function downloadFileHDCD(printFlag, printFlagSignature) { window.location.href = '
+                f'"/tai-ve-hoa-don/False/19CEKRV9LRI/{COOP_GUID}?printFlag=" + printFlag; }}</script>',
+                url=f"{COOP}/xem-hoa-don")
+FAIR_OK = _Resp('<form action="/tai-ve-hoa-don" id="download" method="post">'
+                f'<input name="__RequestVerificationToken" type="hidden" value="{TOK_DL}" /> '
+                f'<input type="hidden" name="idHoaDon" value="{ID_ENC}" /> </form>'
+                f'<a href="/hoa-don-chuyen-doi/{ID_ENC}" target="_blank">Xem hóa đơn chuyển đổi</a>',
+                url=f"{FAIR}/xem-hoa-don")
+INV_COOP = {"shdon": 2901, "khhdon": "K26TAB", "khmshdon": 1, "nbmst": "0301175691",
+            "lookup_url": "http://saigonco-op.einvoice.com.vn",
+            "tt_khac": {"DC TC": "http://saigonco-op.einvoice.com.vn", "Mã TC": "19CEKRV9LRI"}}
+INV_FAIR = {"shdon": 2901, "khhdon": "K26TBD", "khmshdon": 1, "nbmst": "0312263124",
+            "lookup_url": "https://saigoncoop.einvoice.com.vn/",
+            "tt_khac": {"ĐCTC": "https://saigoncoop.einvoice.com.vn/", "Mã TC": "76CG0E7LPAN"}}
+INV_CR = {"shdon": 2901, "khhdon": "C26MDN", "khmshdon": 1, "nbmst": "3600258976",
+          "lookup_url": "https://hddt.centralretail.com.vn/", "ma_tra_cuu": None,
+          "tt_khac": {"QRCODE": "[QRCODE1][/QRCODE1]",
+                      "ExtNMua": "[MaTC]D52B91BAC1[/MaTC][Nxd]153[/Nxd][Sbl]153051867[/Sbl][Sty]POS_MOI[/Sty]",
+                      "ExtHoaDon": "[MaCN]101[/MaCN][TenCN]Big C Đồng Nai[/TenCN]"
+                                   "[DCTC]https://hddt.centralretail.com.vn/[/DCTC]"}}
+
+
+def _setup_coop(monkeypatch, calls, base, result):
+    def fake(session, method, url, **kw):
+        calls.append((method, url, kw))
+        if method == "GET" and url == f"{base}/":
+            return FORM
+        if url.endswith("/DefaultCaptcha/Generate"):
+            return IMG
+        if method == "POST" and url == f"{base}/xem-hoa-don":
+            return result
+        if url.startswith(f"{base}/tai-ve-hoa-don"):
+            return NEW_ZIP
+        raise AssertionError(f"không có route cho {method} {url}")
+    monkeypatch.setattr(thaison, "request", fake)
+    monkeypatch.setattr(thaison, "new_session", lambda: object())
+    monkeypatch.setattr(thaison, "solve_captcha", lambda img, group, min_conf=0.5: "ABCD")
+
+
+def test_saigon_coop_download_by_code_and_guid(monkeypatch):
+    calls = []
+    _setup_coop(monkeypatch, calls, COOP, COOP_OK)
+    assert "BAN GOC" in _text(thaison.ThaisonAdapter().fetch_pdf(INV_COOP))
+    gets = [u for m, u, _ in calls if m == "GET" and "/tai-ve-hoa-don" in u]
+    assert gets == [f"{COOP}/tai-ve-hoa-don/False/19CEKRV9LRI/{COOP_GUID}"]   # bản gốc, không ?printFlag
+
+
+def test_coop_fairprice_download_form(monkeypatch):
+    calls = []
+    _setup_coop(monkeypatch, calls, FAIR, FAIR_OK)
+    assert "BAN GOC" in _text(thaison.ThaisonAdapter().fetch_pdf(INV_FAIR))
+    post = [(u, kw) for m, u, kw in calls if m == "POST" and u.endswith("/tai-ve-hoa-don")]
+    assert post == [(f"{FAIR}/tai-ve-hoa-don", post[0][1])]
+    assert post[0][1]["data"] == {"__RequestVerificationToken": TOK_DL, "idHoaDon": ID_ENC}
+
+
+def test_central_retail_code_from_ext_field():
+    assert thaison.ThaisonAdapter.lookup_code(INV_CR) == "D52B91BAC1"
+    assert thaison.ThaisonAdapter.portal_for(INV_CR) == ("hddt.centralretail.com.vn", False)
+    empty = dict(INV_CR, tt_khac={"ExtNMua": "", "ExtHoaDon": ""})
+    with pytest.raises(PdfFetchError) as ei:
+        thaison.ThaisonAdapter().fetch_pdf(empty)
+    assert ei.value.kind == "no_code"
+
+
+@pytest.mark.parametrize("result, kind", [
+    (_Resp(content=_zip({"1-C26MDN-2901.pdf": _pdf_with("So 2901"), "1-C26MDN-2901.xml": b"<x/>",
+                         "1-C26MDN-2901.html": b"<html/>"})), None),
+    (_Resp(content=_zip({})), "no_pdf"),                                     # mã sai → ZIP rỗng
+    (_Resp(content=_zip({"1-C26MDN-2901.pdf": _pdf_with("So 77777")})), "bad_content"),
+])
+def test_central_retail_zip_without_captcha(monkeypatch, result, kind):
+    calls = []
+
+    def fake(session, method, url, **kw):
+        calls.append((method, url))
+        assert (method, url) == ("GET", f"{CR}/vi-vn/tai-hoa-don-dien-tu/D52B91BAC1")
+        return result
+    monkeypatch.setattr(thaison, "request", fake)
+    monkeypatch.setattr(thaison, "new_session", lambda: object())
+    monkeypatch.setattr(thaison, "solve_captcha", lambda *a, **k: pytest.fail("Central Retail không có captcha"))
+    if kind is None:
+        assert thaison.ThaisonAdapter().fetch_pdf(INV_CR).startswith(b"%PDF")
+    else:
+        with pytest.raises(PdfFetchError) as ei:
+            thaison.ThaisonAdapter().fetch_pdf(INV_CR)
+        assert ei.value.kind == kind
+    assert len(calls) == 1
