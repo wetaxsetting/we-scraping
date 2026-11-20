@@ -678,3 +678,16 @@ def test_store_guid_skips_certificate_download_link():
 def test_new_portals_registered(host, kind):
     assert thaison.PORTALS[host][0] == kind
     assert thaison.ThaisonAdapter.portal_for({"lookup_url": f"https://{host}/"}) == (host, False)
+
+
+@pytest.mark.parametrize("nbmst,host", [
+    ("0311828036", "spf.tracuuhoadon.online"),          # ShopeeFood
+    ("0106773786", "spv.tracuuhoadon.online"),          # Shopee
+    ("0108269207", "be-tra-cuu.einvoice.com.vn"),       # Be Group
+    ("0108269207-001", "be-tra-cuu.einvoice.com.vn"),   # chi nhánh → MST mẹ
+    ("3901157636", "tracuutvan.einvoice.com.vn"),       # cổng nhiều người bán
+])
+def test_seller_without_portal_in_xml_goes_to_its_portal(nbmst, host):
+    """HĐ của các người bán này gửi cho MST khác mà XML không ghi cổng → vẫn vào cổng riêng, không đoán einvoice.vn."""
+    inv = {"nbmst": nbmst, "tt_khac": {"Mã TC": "ZV3YQPWM"}, "lookup_url": None}
+    assert thaison.ThaisonAdapter.portal_for(inv) == (host, False)

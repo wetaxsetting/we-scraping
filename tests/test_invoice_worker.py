@@ -203,6 +203,27 @@ def test_pdf_worker_defers_tasks_of_a_tripped_site_with_delay(monkeypatch, tmp_p
     assert store.released == [(list(range(breaker_threshold + 1, 9)), invoice_job.DEFER_MINUTES)]
 
 
+C_OFF = "0318793907"      # công ty active=false (tài khoản Thuế bị khoá)
+
+
+def test_inactive_company_still_gets_pdfs_but_not_xml(monkeypatch, tmp_path, xml_seen):
+    """active=false chỉ chặn phần cần đăng nhập GDT (XML). PDF lấy từ cổng NCC vẫn phải chạy —
+    trước 20/11 task PDF của công ty tắt bị hoãn 15 phút mãi mãi (0318793907 kẹt 151 HĐ)."""
+    fetched = []
+    monkeypatch.setattr(invoice_job, "pdf_batch",
+                        lambda store, mst, run_id, tasks, stats, out_dir, breakers, deferred:
+                        fetched.extend((mst, t["task_id"]) for t in tasks))
+    store = _WorkerStore([[_task(C_OFF, 1), _task(A, 2)]])
+    invoice_job.run_worker(store, "pdf", tmp_path, once=True)
+    assert fetched == [(C_OFF, 1), (A, 2)]
+    assert not any(ids == [1] for ids, _ in store.released)
+
+    store = _WorkerStore([[_task(C_OFF, 3), _task(A, 4)]])
+    invoice_job.run_worker(store, "xml", tmp_path, once=True)
+    assert xml_seen == [(A, 4, 1)]                                     # XML của công ty tắt: không đụng GDT
+    assert store.released[0] == ([3], invoice_job.COOLDOWN_MINUTES)
+
+
 # ---------------------------------------------------------------------------
 # Đăng nhập GDT dưới khóa theo công ty
 # ---------------------------------------------------------------------------

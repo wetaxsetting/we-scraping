@@ -1063,7 +1063,10 @@ def run_worker(store, task_type: str, out_dir: Path, *, per_company: int = WORKE
 
             for mst, tasks in groups.items():
                 company = companies.get(mst)
-                if company is None:                 # công ty đã tắt (active=false)
+                # Công ty đã tắt (active=false, vd tài khoản Thuế bị khoá) chỉ dừng phần XML — cần đăng nhập
+                # GDT. PDF lấy từ cổng NCC / mail không đụng tới Thuế nên vẫn chạy (trước 20/11 bị hoãn
+                # 15 phút mãi mãi: 0318793907 kẹt 151 HĐ PDF).
+                if company is None and task_type == "xml":
                     store.release_tasks([t["task_id"] for t in tasks], delay_minutes=COOLDOWN_MINUTES)
                     continue
                 stats = run.stats_for(mst)

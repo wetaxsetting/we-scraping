@@ -133,6 +133,27 @@ SELLER_PORTALS = {
     "0100773885": "invoice.kfcvietnam.com.vn",  # KFC Việt Nam (chi nhánh -001)
     "0318836678": "invoice.zaloplatforms.vn",   # Zalo Platforms
     "0316172372": "hddt.cellphones.com.vn",     # Diệu Phúc (CellphoneS)
+    # 20/11: người bán có cổng riêng (thật ≥ 1 HĐ) — để HĐ của họ gửi cho MST khác, XML không ghi
+    # "DC TC"/link, vẫn vào đúng cổng thay vì đoán cổng chung einvoice.vn
+    "0311828036": "spf.tracuuhoadon.online",    # Foody (ShopeeFood)
+    "0106773786": "spv.tracuuhoadon.online",    # Shopee
+    "0108269207": "be-tra-cuu.einvoice.com.vn", # Be Group
+    "0304199027": "dimerco.einvoice.com.vn",
+    "0313501438": "chunilvina.einvoice.com.vn",
+    "3700904711": "chenyesvietnam.einvoice.com.vn",
+    "0100774617": "bureauveritas.einvoice.com.vn",
+    "0303072476": "bureauveritas-certification.einvoice.com.vn",
+    "0304835346": "congtydoangia.einvoice.com.vn",
+    "0314689253": "congtytuvanctacvietnam.einvoice.com.vn",
+    "0312065210": "einvoice.vifb.vn",           # Ý Tưởng Việt (HĐ 2023 không ghi cổng)
+    "0310362754": "hoadon.vfbs.vn",
+    "0313612829": "tracuuhoadon.hasaki.vn",
+    "0319169635": "hoadon.popeyes.vn",          # Kim Kê (Popeyes)
+    "0303490096": "einvoice.vng.com.vn",
+    # tracuutvan: cổng nhiều người bán (form có MA_DV = MST bán)
+    "0313403198": "tracuutvan.einvoice.com.vn",  # King Food Market
+    "3901157636": "tracuutvan.einvoice.com.vn",  # Brotex
+    "0313950049": "tracuutvan.einvoice.com.vn",  # TSL Networks
 }
 
 # Cổng biết là của Thái Sơn nhưng chưa làm được: host → lý do (ghi trong lỗi 'no_portal').
