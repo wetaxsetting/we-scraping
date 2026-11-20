@@ -47,7 +47,9 @@ ENDPOINTS = (
 )
 # Tên trường trong TTKhac chứa mã tra cứu (so khớp sau khi chuẩn hóa NFC + chữ thường)
 CODE_FIELDS = ("mã số bí mật", "mã bí mật", "mã tra cứu", "reservationcode")
-_NOT_FOUND = ("not_found", "không tìm thấy")
+# V1 trả "Hóa đơn không tồn tại trên hệ thống" / "Mã số thuế không hợp lệ" (MST 12 số của hộ kinh doanh) — đều là
+# "không có HĐ ở đây", không phải lỗi lạ (trước 20/11 rơi vào 'other': 21 HĐ ePass 2023 + HKD 079184004298)
+_NOT_FOUND = ("not_found", "không tìm thấy", "không tồn tại", "mã số thuế không hợp lệ")
 
 # Mail S-Invoice cũ (www.sinvoice.vn, sinvoice.viettel.vn) chỉ ghi tên người bán → MST.
 # Khóa = chuỗi con của tiêu đề mail (chữ HOA, NFC). Bổ sung khi gặp người bán mới (MST in trên PDF).

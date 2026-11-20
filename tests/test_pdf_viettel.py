@@ -104,6 +104,16 @@ def test_not_found_on_both_is_no_pdf(monkeypatch):
     assert ei.value.kind == "no_pdf"
 
 
+@pytest.mark.parametrize("v1_msg", ["Hóa đơn không tồn tại trên hệ thống", "Mã số thuế không hợp lệ"])
+def test_v1_not_exist_messages_are_no_pdf(monkeypatch, v1_msg):
+    """Câu thật của V1 (20/11: ePass 2023, hộ kinh doanh MST 12 số) — không phải lỗi lạ."""
+    _router(monkeypatch, [(CUR, NOT_FOUND),
+                          (V1, _Resp(400, b"{}", js={"code": 400, "message": "Bad Request", "data": v1_msg}))], [])
+    with pytest.raises(PdfFetchError) as ei:
+        viettel.ViettelAdapter().fetch_pdf(INV)
+    assert ei.value.kind == "no_pdf"
+
+
 @pytest.mark.parametrize("resp, kind", [
     (_Resp(content=b""), "no_pdf"),                                       # chưa dựng xong
     (_Resp(content=b"<html>" + b"x" * 2000), "bad_content"),
