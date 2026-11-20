@@ -119,6 +119,49 @@ SELLER_PORTALS = [
     {"portal": "bureauveritashcm", "mst": {"0304046704"}, "keys": ("ma_cqt",)},
 ]
 
+# 20/11: dò DNS <alias>-tt78 cho người bán VNPT còn thiếu PDF (tên viết liền, MST, host trong link mail),
+# rồi tra thật bằng MCCQT — mỗi người bán ≥ 1 HĐ ra PDF. MST người bán → alias cổng.
+TT78_SELLERS = {
+    "0317860332": "google", "3603277021": "hyosungdn", "0302731422": "skfvn", "3600943234": "jeongsan",
+    "3700145020": "becamex", "0315161593": "mailinhgroup", "3301622257": "vinatexphuhung",
+    "0314071202": "vieclam24h", "0310959597": "tancanghiepluc", "0304791385": "cangphuoclong",
+    "0313355963": "dimtutac_dongdu", "1100727545": "longhau", "3700226985": "golfpalmsongbe",
+    "0313096162": "ministop", "0309532497": "tancangwarehousing", "3700785006": "icdsongthan",
+    "3702420265": "yfybinhduong", "0100112451": "globaltosercohanoi",
+    # alias = MST
+    **{m: m for m in (
+        "1801719510", "3700881020", "1101744254", "3603054385", "3601025389", "0304170028", "0301055926",
+        "0301745020", "0304413520", "1801314063", "2900677983", "3703100821", "3703243770", "068189009465",
+        "0800285724", "3702746517", "0315288078", "1101801061", "1200506959", "1201571968", "1801148320",
+        "2901908150", "3200228159", "0310367840", "3502260127", "4300896930", "3600430465", "3600525188",
+        "3600723983", "3600905366", "0307551712", "3602806064", "3900378512", "3700773018", "0317329957",
+        "0317204330", "0318888098", "0318987010", "0316341623", "044089007262", "3702325163")},
+}
+# Lotte Mart (0304741634): mỗi siêu thị 1 cổng lottemart-<mã> → chọn theo ký hiệu HĐ (bỏ "C26", vd "MCA").
+# Mã cổng dò DNS 3 chữ cái; ký hiệu ↔ siêu thị theo địa chỉ người bán trên XML.
+LOTTE_SERIES = {
+    "nsg": {"MAA", "MAB", "MBA", "MBB", "MHQ", "MMA", "MPA", "MPB"},   # Nam Sài Gòn + văn phòng (469 NHT)
+    "dni": {"MCA", "MCB"},                    # Đồng Nai (Amata, Biên Hòa)
+    "dng": {"MDA", "MDB"},                    # Đà Nẵng
+    "nan": {"MEA"},                           # Nghệ An (Vinh)
+    "btn": {"MGA", "MGB"},                    # Bình Thuận (Phan Thiết)
+    "tnh": {"MIA"},                           # Tây Ninh
+    "bdh": {"MKA"},                           # Ba Đình (Lotte Hà Nội, Liễu Giai)
+    "vtu": {"MLA"},                           # Vũng Tàu
+    "cto": {"MNA"},                           # Cần Thơ
+    "ntg": {"MQA", "MSA"},                    # Nha Trang
+    "bdg": {"MRA"},                           # Bình Dương
+}
+for _code, _series in LOTTE_SERIES.items():
+    PORTALS[f"lottemart-{_code}"] = f"https://lottemart-{_code}-tt78.vnpt-invoice.com.vn"
+    SELLER_PORTALS.append({"portal": f"lottemart-{_code}", "mst": {"0304741634"}, "series": _series,
+                           "keys": ("ma_cqt",)})
+# ký hiệu Lotte chưa gặp → cổng trụ sở (Nam Sài Gòn); đứng sau các dòng có "series"
+SELLER_PORTALS.append({"portal": "lottemart-nsg", "mst": {"0304741634"}, "keys": ("ma_cqt",)})
+for _mst, _alias in TT78_SELLERS.items():
+    PORTALS.setdefault(_alias, f"https://{_alias}-tt78.vnpt-invoice.com.vn")
+    SELLER_PORTALS.append({"portal": _alias, "mst": {_mst}, "keys": ("ma_cqt",)})
+
 _TOKEN_RE = r'id="{form_id}".*?name="__RequestVerificationToken" type="hidden" value="([^"]+)"'
 _ERRORBOX_RE = re.compile(r'class="errorbox">.*?/>\s*(.*?)<', re.S)
 _CHECKCODE_RE = re.compile(r"ajxCall4Portal\w*\('([^']+)'")
@@ -217,8 +260,10 @@ class VnptAdapter(PdfAdapter):
         mst = (invoice.get("nbmst") or "").strip()
         parent = mst.split("-")[0]
         name = (invoice.get("nbten") or "").upper()
-        tests = (lambda r: bool(mst) and mst in r.get("mst", ()),
-                 lambda r: bool(parent) and parent != mst and parent in r.get("mst", ()),
+        series = str(invoice.get("khhdon") or "")[3:].upper()     # "C26MCA" → "MCA"
+        ok_series = lambda r: "series" not in r or series in r["series"]   # noqa: E731
+        tests = (lambda r: ok_series(r) and bool(mst) and mst in r.get("mst", ()),
+                 lambda r: ok_series(r) and bool(parent) and parent != mst and parent in r.get("mst", ()),
                  lambda r: bool(r.get("name_contains")) and r["name_contains"] in name)
         for test in tests:
             for rule in SELLER_PORTALS:

@@ -330,6 +330,26 @@ def test_seller_portal_and_key(inv, base, key):
     assert vnpt.VnptAdapter.fkey(inv) == key
 
 
+@pytest.mark.parametrize("inv,base", [
+    # 20/11: cổng dò DNS theo tên / MST (thật ≥ 1 HĐ mỗi người bán)
+    ({"nbmst": "0317860332", "khhdon": "C26TGG"}, "https://google-tt78.vnpt-invoice.com.vn"),
+    ({"nbmst": "1801719510", "khhdon": "C26MTN"}, "https://1801719510-tt78.vnpt-invoice.com.vn"),
+    ({"nbmst": "068189009465"}, "https://068189009465-tt78.vnpt-invoice.com.vn"),
+    # Lotte Mart: cổng theo ký hiệu (thật 22/22 ký hiệu)
+    ({"nbmst": "0304741634", "khhdon": "C26MAB"}, "https://lottemart-nsg-tt78.vnpt-invoice.com.vn"),
+    ({"nbmst": "0304741634", "khhdon": "C26MHQ"}, "https://lottemart-nsg-tt78.vnpt-invoice.com.vn"),
+    ({"nbmst": "0304741634-012", "khhdon": "C26MCA"}, "https://lottemart-dni-tt78.vnpt-invoice.com.vn"),
+    ({"nbmst": "0304741634", "khhdon": "C26MKA"}, "https://lottemart-bdh-tt78.vnpt-invoice.com.vn"),
+    ({"nbmst": "0304741634", "khhdon": "C27MSA"}, "https://lottemart-ntg-tt78.vnpt-invoice.com.vn"),
+    ({"nbmst": "0304741634", "khhdon": "C26MZZ"}, "https://lottemart-nsg-tt78.vnpt-invoice.com.vn"),  # chưa gặp
+    ({"nbmst": "0304741634"}, "https://lottemart-nsg-tt78.vnpt-invoice.com.vn"),                     # không ký hiệu
+])
+def test_dns_found_portals(inv, base):
+    inv = dict(inv, tt_khac={}, ma_cqt="M1-26-NFTQT-03700008119")
+    assert vnpt.VnptAdapter.portal_for(inv) == base
+    assert vnpt.VnptAdapter.fkey(inv) == "M1-26-NFTQT-03700008119"
+
+
 def test_xml_fkey_wins_over_seller_key():
     inv = dict(SW2, tt_khac={"Fkey": "REALFKEY"})
     assert vnpt.VnptAdapter.fkey(inv) == "REALFKEY"
