@@ -104,6 +104,24 @@ PORTALS = {
     "saigonco-op.einvoice.com.vn": ("store", "https://saigonco-op.einvoice.com.vn"),
     "saigoncoop.einvoice.com.vn": ("store", "https://saigoncoop.einvoice.com.vn"),
     "hddt.centralretail.com.vn": ("qr", "https://hddt.centralretail.com.vn"),
+    # 20/11: cổng riêng lấy từ "DC TC"/lookup_url của HĐ đang chờ — tra thật đều ra PDF
+    "be-tra-cuu.einvoice.com.vn": ("store", "https://be-tra-cuu.einvoice.com.vn"),        # Be Group
+    "dimerco.einvoice.com.vn": ("store", "https://dimerco.einvoice.com.vn"),
+    "chunilvina.einvoice.com.vn": ("store", "https://chunilvina.einvoice.com.vn"),
+    "chenyesvietnam.einvoice.com.vn": ("store", "https://chenyesvietnam.einvoice.com.vn"),
+    "bureauveritas.einvoice.com.vn": ("store", "https://bureauveritas.einvoice.com.vn"),
+    "bureauveritas-certification.einvoice.com.vn": ("store", "https://bureauveritas-certification.einvoice.com.vn"),
+    "congtydoangia.einvoice.com.vn": ("store", "https://congtydoangia.einvoice.com.vn"),
+    "congtytuvanctacvietnam.einvoice.com.vn": ("store", "https://congtytuvanctacvietnam.einvoice.com.vn"),
+    # cổng nhiều người bán: form có thêm MA_DV = MST bên bán (King Food, Brotex, TSL Networks)
+    "tracuutvan.einvoice.com.vn": ("store", "https://tracuutvan.einvoice.com.vn"),
+    "spf.tracuuhoadon.online": ("store_img", "https://spf.tracuuhoadon.online"),          # ShopeeFood (Foody)
+    "spv.tracuuhoadon.online": ("store_img", "https://spv.tracuuhoadon.online"),          # Shopee
+    "einvoice.vifb.vn": ("store_img", "https://einvoice.vifb.vn"),
+    "hoadon.vfbs.vn": ("store_img", "https://hoadon.vfbs.vn"),
+    "tracuuhoadon.hasaki.vn": ("store_img", "https://tracuuhoadon.hasaki.vn"),
+    "hoadon.popeyes.vn": ("store_img", "https://hoadon.popeyes.vn"),
+    "einvoice.vng.com.vn": ("store_img", "https://einvoice.vng.com.vn"),
 }
 
 # Người bán → host cổng, khi XML không ghi "DC TC".
@@ -132,7 +150,12 @@ _TOKEN_RE = re.compile(r'name="__RequestVerificationToken" type="hidden" value="
 _GENERIC_ERR_RE = re.compile(r'fix-text-danger">([^<]*)<')
 _GENERIC_OK_RE = re.compile(r'id="IsCaptchaValid" value="true"', re.I)
 # MM: /tai-ve-hoa-don/<guid>; Saigon Co.op: /tai-ve-hoa-don/False/<mã>/<guid> (bản gốc, không ?printFlag)
-_STORE_GUID_RE = re.compile(r"(/tai-ve-hoa-don/(?:[A-Za-z0-9]+/)*[0-9a-fA-F-]{36})(?![?0-9a-fA-F-])")
+# (bỏ /tai-ve-hoa-don/DownloadCer/<guid>/… = tải chứng thư số, ShopeeFood/Shopee/Hasaki có cả 2 link)
+_STORE_GUID_RE = re.compile(
+    r"(/tai-ve-hoa-don/(?:(?!DownloadCer/)[A-Za-z0-9]+/)*[0-9a-fA-F-]{36})(?![?/0-9a-fA-F-])")
+# tracuutvan (cổng nhiều người bán): nút "Download HĐ" → /tai-ve-hoa-don/<id>?maDonVi=<MST bán>
+_STORE_HDID_RE = re.compile(r'id="hoaDonIdHidden" value="(\d+)"')
+_STORE_MADV_RE = re.compile(r'id="maDonViHidden" value="([^"]*)"')
 _BRACKET_CODE_RE = re.compile(r"\[MaTC\]\s*([A-Za-z0-9]{6,30})\s*\[/MaTC\]", re.I)
 # Form tải: /Download/DownloadFile (Cổng Vàng, KFC, …) hoặc /tai-ve-hoa-don (Co.op FairPrice) + idHoaDon
 _STORE_DL_RE = re.compile(r'<form action="(/Download/DownloadFile|/tai-ve-hoa-don)"[^>]*>(.*?)</form>', re.S)
@@ -352,7 +375,7 @@ class ThaisonAdapter(PdfAdapter):
                 elif kind == "qr":
                     pdf = self._qr(s, base, code)
                 else:
-                    pdf = self._store(s, base, code, kind)
+                    pdf = self._store(s, base, code, kind, str(invoice.get("nbmst") or "").strip())
                 break
             except _WrongCaptcha as e:
                 log.info("Thái Sơn %s: captcha lần %d không qua (%s)", host, attempt, e)
@@ -413,10 +436,12 @@ class ThaisonAdapter(PdfAdapter):
 
     # --- cổng riêng kiểu /xem-hoa-don (MM Mega Market, Cổng Vàng, KFC, Zalo, CellphoneS) ----
 
-    def _store(self, s, base: str, code: str, kind: str = "store") -> bytes:
+    def _store(self, s, base: str, code: str, kind: str = "store", seller_mst: str = "") -> bytes:
         page = f"{base}/"
         form = request(s, "GET", page).text or ""
         data = {"MA_NHAN_HOA_DON": code}
+        if 'name="MA_DV"' in form:            # cổng nhiều người bán (tracuutvan): "Mã số thuế bên bán"
+            data["MA_DV"] = seller_mst
         tok = _TOKEN_RE.search(form)
         if tok:
             data["__RequestVerificationToken"] = html.unescape(tok.group(1))
@@ -432,7 +457,13 @@ class ThaisonAdapter(PdfAdapter):
         text = r.text or ""
         g = _STORE_GUID_RE.search(text)
         dl = _STORE_DL_RE.search(text)
-        if g:                                 # MM Mega Market / Saigon Co.op: link tải thẳng theo guid
+        hd = _STORE_HDID_RE.search(text)
+        if hd:                                # tracuutvan
+            dv = _STORE_MADV_RE.search(text)
+            d = request(s, "GET", f"{base}/tai-ve-hoa-don/{hd.group(1)}",
+                        params={"maDonVi": html.unescape(dv.group(1)) if dv else seller_mst},
+                        headers={"Referer": r.url or page}, timeout=60)
+        elif g:                               # MM Mega Market / Saigon Co.op: link tải thẳng theo guid
             d = request(s, "GET", base + g.group(1), headers={"Referer": r.url or page}, timeout=60)
         elif dl:                              # bản mới: form POST /Download/DownloadFile
             fields = {k: html.unescape(v) for k, v in _HIDDEN_RE.findall(dl.group(2))}

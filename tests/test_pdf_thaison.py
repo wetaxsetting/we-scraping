@@ -635,3 +635,46 @@ def test_central_retail_zip_without_captcha(monkeypatch, result, kind):
             thaison.ThaisonAdapter().fetch_pdf(INV_CR)
         assert ei.value.kind == kind
     assert len(calls) == 1
+
+
+# ---------------------------------------------------------------- cổng riêng 20/11: tracuutvan, ShopeeFood…
+TVAN = "https://tracuutvan.einvoice.com.vn"
+INV_TVAN = {"shdon": 2901, "khhdon": "C26TYY", "khmshdon": 1, "nbmst": "3901157636",
+            "lookup_url": "http://tracuutvan.einvoice.com.vn/", "tt_khac": {"Mã TC": "TYIK6AB"}}
+TVAN_OK = _Resp('<form action="/SignApplet/SearchCKS" id="formgr" method="post"></form>'
+                '<a href="/ket-qua-kiem-tra/Tai-ve/dfe2c98"></a>'
+                '<input type="hidden" id="hoaDonIdHidden" value="10507802" />'
+                '<input type="hidden" id="maDonViHidden" value="3901157636" />', url=f"{TVAN}/xem-hoa-don")
+
+
+def test_tracuutvan_sends_seller_mst_and_downloads_by_id(monkeypatch):
+    calls = []
+    _setup_coop(monkeypatch, calls, TVAN, TVAN_OK)
+    form_with_dv = _Resp(FORM.text + '<input type="text" name="MA_DV" id="MA_DV" />')
+    fake = thaison.request
+    monkeypatch.setattr(thaison, "request",
+                        lambda s, m, u, **kw: form_with_dv if (m == "GET" and u == f"{TVAN}/") else fake(s, m, u, **kw))
+    assert "BAN GOC" in _text(thaison.ThaisonAdapter().fetch_pdf(INV_TVAN))
+    post = [kw["data"] for m, u, kw in calls if m == "POST" and u.endswith("/xem-hoa-don")]
+    assert post[0]["MA_DV"] == "3901157636" and post[0]["MA_NHAN_HOA_DON"] == "TYIK6AB"
+    gets = [(u, kw.get("params")) for m, u, kw in calls if m == "GET" and "/tai-ve-hoa-don" in u]
+    assert gets == [(f"{TVAN}/tai-ve-hoa-don/10507802", {"maDonVi": "3901157636"})]
+
+
+def test_store_guid_skips_certificate_download_link():
+    page = ('<a href="/tai-ve-hoa-don/DownloadCer/d3a4d1dc-96b1-4b55-8d52-3de303915310/0311828036/3gone5kx">CKS</a>'
+            '<form action="/Download/DownloadFile" id="download" method="post"></form>')
+    assert thaison._STORE_GUID_RE.search(page) is None
+    assert thaison._STORE_DL_RE.search(page)
+    coop = f'"/tai-ve-hoa-don/False/19CEKRV9LRI/{COOP_GUID}"'
+    assert thaison._STORE_GUID_RE.search(coop).group(1) == f"/tai-ve-hoa-don/False/19CEKRV9LRI/{COOP_GUID}"
+
+
+@pytest.mark.parametrize("host,kind", [
+    ("spf.tracuuhoadon.online", "store_img"), ("spv.tracuuhoadon.online", "store_img"),
+    ("tracuuhoadon.hasaki.vn", "store_img"), ("be-tra-cuu.einvoice.com.vn", "store"),
+    ("dimerco.einvoice.com.vn", "store"), ("tracuutvan.einvoice.com.vn", "store"),
+])
+def test_new_portals_registered(host, kind):
+    assert thaison.PORTALS[host][0] == kind
+    assert thaison.ThaisonAdapter.portal_for({"lookup_url": f"https://{host}/"}) == (host, False)
