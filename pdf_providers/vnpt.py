@@ -89,6 +89,9 @@ PORTALS = {
     "swfoodsbeveragescn2": "https://swfoodsbeveragescn2-tt78.vnpt-invoice.com.vn",
     "swfoodsbeverages": "https://swfoodsbeverages-tt78.vnpt-invoice.com.vn",
     "navigos": "https://navigos-tt78.vnpt-invoice.com.vn",
+    "snp": "https://snp-tt78.vnpt-invoice.com.vn",                           # Tân Cảng Sài Gòn (SNP)
+    "tancanglogistics": "https://tancanglogistics-tt78.vnpt-invoice.com.vn",
+    "bureauveritashcm": "https://bureauveritashcm-tt78.vnpt-invoice.com.vn",
 }
 
 # Người bán → cổng. Khớp theo MST (chính xác, rồi MST công ty mẹ của chi nhánh "-001") hoặc tên
@@ -107,6 +110,13 @@ SELLER_PORTALS = [
     # SW F&B trụ sở (HĐ 2023): cổng riêng không có "cn2", mã = MCCQT (thật 3/3, 03/11)
     {"portal": "swfoodsbeverages", "mst": {"0313894637"}, "keys": ("ma_cqt",)},
     {"portal": "navigos", "mst": {"0304836029"}, "keys": ("ma_cqt",)},      # Navigos Group (thật 1/1)
+    # 19/11: không có PDF/mail nào ghi cổng → dò tên miền -tt78 (tên không tồn tại = lỗi DNS), rồi tra thử
+    # bằng MCCQT (XML không có Fkey). Tổng công ty Tân Cảng Sài Gòn — C26TCL, thật 2/2
+    {"portal": "snp", "mst": {"0300514849"}, "keys": ("ma_cqt",)},
+    # Đại lý Giao nhận Vận tải Xếp dỡ Tân Cảng (Tan Cang Logistics) — C26TTA/TTE/TTG, thật 4/4
+    {"portal": "tancanglogistics", "mst": {"0304875444"}, "keys": ("ma_cqt",)},
+    # Bureau Veritas Consumer Products Services VN — C26TBV/TAA, thật 5/5
+    {"portal": "bureauveritashcm", "mst": {"0304046704"}, "keys": ("ma_cqt",)},
 ]
 
 _TOKEN_RE = r'id="{form_id}".*?name="__RequestVerificationToken" type="hidden" value="([^"]+)"'

@@ -316,6 +316,14 @@ SW2 = {"shdon": 888, "khhdon": "C24TAA", "khmshdon": 1, "nbmst": "0313894637-002
     (SW2, "https://swfoodsbeveragescn2-tt78.vnpt-invoice.com.vn", "008E9A81FF5E014211AADC1EA23F8AE172"),
     ({"nbmst": "0304836029", "tt_khac": {"Extra3": "0"}, "ma_cqt": "00725E15"},
      "https://navigos-tt78.vnpt-invoice.com.vn", "00725E15"),
+    # 19/11: cổng dò theo tên miền, tra bằng MCCQT (thật: SNP 2/2, Tan Cang Logistics 4/4, BV 5/5)
+    ({"nbmst": "0300514849", "tt_khac": {}, "ma_cqt": "006ADB7BB8CF6D42118FBDA882B8CC446F"},
+     "https://snp-tt78.vnpt-invoice.com.vn", "006ADB7BB8CF6D42118FBDA882B8CC446F"),
+    ({"nbmst": "0304875444", "tt_khac": {}, "ma_cqt": "00AAE3D45380354B85A6459260E31FA824"},
+     "https://tancanglogistics-tt78.vnpt-invoice.com.vn", "00AAE3D45380354B85A6459260E31FA824"),
+    ({"nbmst": "0304046704", "tt_khac": {"Extra4": "02862810682", "Extra5": "TARGET CORPORATION"},
+      "ma_cqt": "00831B6B17D74A40C9B6CB40DF88615D4C"},
+     "https://bureauveritashcm-tt78.vnpt-invoice.com.vn", "00831B6B17D74A40C9B6CB40DF88615D4C"),
 ])
 def test_seller_portal_and_key(inv, base, key):
     assert vnpt.VnptAdapter.portal_for(inv) == base
