@@ -74,6 +74,16 @@ TT78HD_HOST = "tt78hd.hilo.com.vn"
 TRACKING_HOST = "tracking.hilo.com.vn"            # link đếm click/quảng cáo trong mail → bỏ qua
 LEGACY_SELLERS = {
     "3603526528",                                   # Kim Đại Phát (PDF ghi tracuuhddt78; thật 1/1 + 2 PDF mail)
+    # 20/11: XML không ghi cổng; thử thẳng link getinvoice của tracuuhddt78 → ra PDF (thật 1/1 mỗi người bán)
+    "0311915810",                                   # Huy Bảo Tín (HĐ 2023)
+    "0312262064",                                   # Dong Seo Vina
+    "0312669999",                                   # Chuyển phát Vượt Thời Gian
+    "0319182509",                                   # TMDV Phát triển Tân Hội
+    "3701825484",                                   # Hùng Hào Phát
+}
+# Người bán có cổng HILO đời cũ RIÊNG (cùng phần mềm tracuuhddt78, cùng link getinvoice token "mẫu:ký hiệu:số:MST")
+LEGACY_SELLER_BASES = {
+    "0313506115": "https://hoadon.ahamove.com",      # Dịch vụ Tức Thời (Ahamove), K26TDA — thật 1/1, 20/11
 }
 
 _TOKEN_RE = re.compile(r'name="__RequestVerificationToken" type="hidden" value="([^"]+)"')
@@ -217,7 +227,9 @@ class HiloAdapter(PdfAdapter):
     @staticmethod
     def is_legacy(invoice: dict) -> bool:
         host = (urlsplit((invoice.get("lookup_url") or "").strip()).hostname or "").lower()
-        return host == LEGACY_HOST or (invoice.get("nbmst") or "").strip() in LEGACY_SELLERS
+        mst = (invoice.get("nbmst") or "").strip()
+        return (host == LEGACY_HOST or mst in LEGACY_SELLERS or mst.split("-")[0] in LEGACY_SELLERS
+                or mst.split("-")[0] in LEGACY_SELLER_BASES)
 
     def invoice_from_link(self, url: str, code, mail_text: str):
         """Link mail tracuuhddt78: /Invoice/getinvoice|ViewFromEmail?token=.. → dict HĐ. Không mở link."""
@@ -278,7 +290,8 @@ class HiloAdapter(PdfAdapter):
         tok = legacy_token(invoice)
         if not tok:
             raise PdfFetchError("Thiếu mẫu/ký hiệu/số/MST bán để dựng link tải HILO", "no_code")
-        return self._getinvoice(LEGACY_BASE, tok, invoice)
+        base = LEGACY_SELLER_BASES.get((invoice.get("nbmst") or "").strip().split("-")[0], LEGACY_BASE)
+        return self._getinvoice(base, tok, invoice)
 
     @staticmethod
     def _getinvoice(base: str, tok: str, invoice: dict) -> bytes:

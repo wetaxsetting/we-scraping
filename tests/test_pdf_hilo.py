@@ -270,6 +270,34 @@ def test_legacy_errors(monkeypatch, resp, kind):
     assert ei.value.kind == kind
 
 
+@pytest.mark.parametrize("nbmst", ["0312262064", "0312669999", "3701825484-001"])   # thêm 20/11 (+ chi nhánh)
+def test_new_legacy_sellers_use_shared_portal(monkeypatch, nbmst):
+    calls = []
+    _install_legacy(monkeypatch, _Resp(content=_pdf_with("So 1443"),
+                                       headers={"Content-Type": "application/pdf"}), calls)
+    inv = dict(KDP, nbmst=nbmst)
+    assert hilo.HiloAdapter.is_legacy(inv)
+    assert hilo.HiloAdapter().fetch_pdf(inv).startswith(b"%PDF")
+    assert hilo.decode_legacy_token(calls[0][2]["params"]["token"])["nbmst"] == nbmst
+
+
+def test_ahamove_uses_its_own_legacy_portal(monkeypatch):
+    """Tức Thời (Ahamove): cổng HILO cũ riêng hoadon.ahamove.com, cùng link getinvoice token."""
+    calls = []
+
+    def fake(session, method, url, **kw):
+        calls.append((url, kw))
+        return _Resp(content=_pdf_with("So 18360217"), headers={"Content-Type": "application/pdf"})
+    monkeypatch.setattr(hilo, "request", fake)
+    monkeypatch.setattr(hilo, "new_session", lambda: object())
+    inv = {"shdon": 18360217, "khhdon": "K26TDA", "khmshdon": 1, "nbmst": "0313506115",
+           "lookup_url": "https://ahamove.com/", "tt_khac": {"Fkey": "3CD47RRF3V0UCSR"}}
+    assert hilo.HiloAdapter().fetch_pdf(inv).startswith(b"%PDF")
+    assert calls[0][0] == "https://hoadon.ahamove.com/Invoice/getinvoice"
+    assert hilo.decode_legacy_token(calls[0][1]["params"]["token"]) == {
+        "khmshdon": 1, "khhdon": "K26TDA", "shdon": 18360217, "nbmst": "0313506115"}
+
+
 def test_legacy_wrong_invoice_pdf_rejected(monkeypatch):
     _install_legacy(monkeypatch, _Resp(content=_pdf_with("So 9999"),
                                        headers={"Content-Type": "application/pdf"}), [])

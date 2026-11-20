@@ -585,6 +585,11 @@ mail đã kèm file; link `/xac-nhan-email/` **không bao giờ mở**); e-invoi
   `LEGACY_SELLERS` adapter **tự dựng token từ XML**, đồng thời nhận link mail `getinvoice` / `ViewFromEmail`
 (`invoice_from_link`) — user chọn giữ cả 2 đường (23/10). Người bán mới dùng cổng này: thêm MST vào `LEGACY_SELLERS`.
   `tt78hd.hilo.com.vn` dùng token kiểu khác (`1_C23TIH_927|MST`) — làm 26/10 (`decode_tt78hd_token`, link mail 2/2).
+  **20/11:** người bán HILO "chưa biết cổng" → thử thẳng `getinvoice` token dựng từ XML (không captcha, sai thì 302) →
+  thêm 5 người bán vào `LEGACY_SELLERS` (Dong Seo, Vượt Thời Gian, Huy Bảo Tín, Tân Hội, Hùng Hào Phát, 12 HĐ). Ahamove
+  (Tức Thời 0313506115, 18 HĐ K26TDA) có cổng HILO cũ **riêng** `hoadon.ahamove.com` (cùng phần mềm) → `LEGACY_SELLER_BASES`
+  (`hddt.ahamove.com` là cổng Thái Sơn cũ của Ahamove). Chưa được: UPS 0309865746 (`evatfinance.hilo.com.vn` = trang đăng
+  nhập người phát hành), Xanh SM/GSM 0110269067 (không cổng nào có).
 
 **Mã / link tra cứu trong XML** (`xml_parser._guess_ma_tra_cuu`, `_find_lookup_url`, sửa 18/11): mã nhận tên trường TTKhac
 theo nghĩa sau khi bỏ dấu ("Mã số bí mật" Viettel, "Mã tra cứu"/"Số bảo mật" M-Invoice, VETC, "Mã tra cứu hóa đơn",
