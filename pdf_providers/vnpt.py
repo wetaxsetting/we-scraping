@@ -128,6 +128,11 @@ TT78_SELLERS = {
     "0313355963": "dimtutac_dongdu", "1100727545": "longhau", "3700226985": "golfpalmsongbe",
     "0313096162": "ministop", "0309532497": "tancangwarehousing", "3700785006": "icdsongthan",
     "3702420265": "yfybinhduong", "0100112451": "globaltosercohanoi",
+    # 20/11 vòng 2: alias sinh tự động từ tên người bán (cụm từ liên tiếp, bỏ dấu), tra thật 1/1 mỗi người
+    "0312290897": "grozbeckertvn", "0303012396": "vinhthanhdat", "0312016132": "indogunavina",
+    "0311770883": "pharmacity", "3600890952": "hyosungvn", "0316884002": "rohlig",
+    "0304896268": "congngheminhtam", "4201938996": "daithuanphanphoi", "0303436268": "dichvuachuan",
+    "0313462725": "eufoodsaigon", "0317700184": "tamcuisine", "3702446760": "longgiang",
     # alias = MST
     **{m: m for m in (
         "1801719510", "3700881020", "1101744254", "3603054385", "3601025389", "0304170028", "0301055926",

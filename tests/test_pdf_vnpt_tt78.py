@@ -335,6 +335,8 @@ def test_seller_portal_and_key(inv, base, key):
     ({"nbmst": "0317860332", "khhdon": "C26TGG"}, "https://google-tt78.vnpt-invoice.com.vn"),
     ({"nbmst": "1801719510", "khhdon": "C26MTN"}, "https://1801719510-tt78.vnpt-invoice.com.vn"),
     ({"nbmst": "068189009465"}, "https://068189009465-tt78.vnpt-invoice.com.vn"),
+    ({"nbmst": "0312290897", "khhdon": "C26TGB"}, "https://grozbeckertvn-tt78.vnpt-invoice.com.vn"),
+    ({"nbmst": "0311770883", "khhdon": "C26MPC"}, "https://pharmacity-tt78.vnpt-invoice.com.vn"),
     # Lotte Mart: cổng theo ký hiệu (thật 22/22 ký hiệu)
     ({"nbmst": "0304741634", "khhdon": "C26MAB"}, "https://lottemart-nsg-tt78.vnpt-invoice.com.vn"),
     ({"nbmst": "0304741634", "khhdon": "C26MHQ"}, "https://lottemart-nsg-tt78.vnpt-invoice.com.vn"),
