@@ -40,6 +40,15 @@ class PdfAdapter:
     def fetch_pdf(self, invoice: dict) -> bytes:
         raise NotImplementedError
 
+    def pending_input_signature(self) -> tuple:
+        """
+        Tên các file người/script đang thả vào hộp chờ của adapter (rỗng = không có).
+
+        Worker dùng để chỉ requeue khi hộp chờ **vừa thay đổi** — file không khớp HĐ nào
+        (nằm lại mãi) không làm requeue toàn bộ task mỗi phút.
+        """
+        return ()
+
     def invoice_from_link(self, url: str, code: str | None, mail_text: str) -> dict | None:
         """
         Mail chỉ có link/mã (vd HĐ hthdon=2: Thuế không có XML) → dict HĐ cho fetch_pdf

@@ -103,3 +103,58 @@ class TestCheckPayload:
 
 def data_url() -> str:
     return "data:application/pdf;base64," + base64.b64encode(PDF).decode()
+
+
+def test_requeue_keys_maps_json_to_task(monkeypatch):
+    """JSON vừa lấy → tìm đúng task PDF (MST bán, mẫu, ký hiệu, số) và đưa về hàng đợi."""
+    import psycopg2
+
+    import invoice_store
+
+    class _Cur:
+        def __init__(self):
+            self.calls, self.rows = [], [(42,)]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params):
+            self.calls.append((sql, params))
+
+        def fetchall(self):
+            return self.rows
+
+    cur = _Cur()
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def cursor(self):
+            return cur
+
+    class _Store:
+        ids = None
+
+        def __init__(self, dsn):
+            pass
+
+        def requeue_tasks(self, ids):
+            _Store.ids = ids
+            return len(ids)
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://fake/db")
+    monkeypatch.setattr(psycopg2, "connect", lambda *a, **k: _Conn())
+    monkeypatch.setattr(invoice_store, "InvoiceStore", _Store)
+
+    matched, n = fpt_batch.requeue_keys([("2300680991", "1", "C25TAB", "00000943")])
+    assert (matched, n) == (1, 1) and _Store.ids == [42]
+    sql, params = cur.calls[0]
+    assert params == ("2300680991", 1, "C25TAB", 943)
+    assert "upper(i.khhdon)" in sql

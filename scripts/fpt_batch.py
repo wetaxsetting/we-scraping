@@ -28,7 +28,8 @@ Lưu ý:
 - 1 link = 1 HĐ; link trùng `(mst, sec)` được gộp. JSON đã có thì bỏ qua (trừ `--force`).
 - JSON không hợp lệ (thiếu `doc`/`pdf`, PDF hỏng) được cất ở `output/manual/fpt/_invalid/` để soi, KHÔNG vào
   hộp chờ (adapter chỉ quét `*.json` ở cấp ngoài).
-- Chạy xong mới cần `--import`; nếu worker PDF đang chạy thì nó tự nhặt ở lượt sau, không cần `--import`.
+- Lưu JSON xong, script tự đưa task PDF của **đúng HĐ đó** về hàng đợi (worker PDF đang chạy nhặt
+  ngay, kể cả hộp chờ rỗng); `--no-requeue` để tắt. `--import` chỉ cần khi muốn chạy hàng đợi ngay.
 """
 from __future__ import annotations
 
@@ -196,12 +197,13 @@ async def fetch_payload(page, url: str, timeout: float) -> dict:
         return json.loads(await resp.text())
 
 
-async def run_browser(args, jobs: list[Job], drop: Path) -> tuple[int, int, list[int]]:
-    """Chạy lần lượt từng link. Trả (số lấy được, số lỗi, link_id lấy được)."""
+async def run_browser(args, jobs: list[Job], drop: Path) -> tuple[int, int, list[int], list[tuple]]:
+    """Chạy lần lượt từng link. Trả (số lấy được, số lỗi, link_id lấy được, khóa HĐ đã lấy)."""
     from playwright.async_api import TimeoutError as PWTimeout, async_playwright
 
     fetched = failed = 0
     ok_ids: list[int] = []
+    saved_keys: list[tuple] = []
     invalid_dir = drop / "_invalid"
     profile = Path(args.profile).expanduser().resolve()
     profile.mkdir(parents=True, exist_ok=True)
@@ -258,13 +260,52 @@ async def run_browser(args, jobs: list[Job], drop: Path) -> tuple[int, int, list
                     continue
                 write_json(target, data)
                 ok_ids.extend(job.link_ids)
+                doc = data.get("doc") or {}
+                saved_keys.append((str(doc.get("stax") or "").strip(),
+                                   str(doc.get("form") or "").strip(),
+                                   str(doc.get("serial") or "").strip(),
+                                   str(doc.get("seq") or "").strip()))
                 fetched += 1
                 log.info("[%d/%d] OK   %s → %s (%d KB)", i, total, desc, target.name,
                          target.stat().st_size // 1024)
                 await asyncio.sleep(args.delay)
         finally:
             await context.close()
-    return fetched, failed, ok_ids
+    return fetched, failed, ok_ids, saved_keys
+
+
+def requeue_keys(keys: list[tuple]) -> tuple[int, int]:
+    """JSON vừa lấy → requeue đúng task PDF của HĐ đó, worker nhặt được dù hộp chờ đang rỗng."""
+    dsn = os.getenv("DATABASE_URL")
+    if not dsn:
+        log.warning("Không có DATABASE_URL → không requeue task (JSON vẫn nằm trong hộp chờ)")
+        return 0, 0
+    import psycopg2
+
+    task_ids: set[int] = set()
+    with psycopg2.connect(dsn, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            for stax, form, serial, seq in keys:
+                try:
+                    shdon = int(str(seq).strip())
+                except ValueError:
+                    continue
+                try:
+                    cond, form_val = "i.khmshdon = %s", int(str(form).strip())
+                except ValueError:
+                    cond, form_val = "i.khmshdon::text = %s", str(form).strip()
+                cur.execute(f"""
+                    SELECT t.id FROM tasks t JOIN invoices i ON i.id = t.invoice_id
+                     WHERE t.task_type = 'pdf' AND i.nbmst = %s AND {cond}
+                       AND upper(i.khhdon) = upper(%s) AND i.shdon = %s
+                """, (stax, form_val, serial, shdon))
+                task_ids.update(r[0] for r in cur.fetchall())
+    if not task_ids:
+        return 0, 0
+    import invoice_store
+
+    store = invoice_store.InvoiceStore(dsn)
+    return len(task_ids), store.requeue_tasks(sorted(task_ids))
 
 
 def parse_args() -> argparse.Namespace:
@@ -289,6 +330,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--force", action="store_true", help="ghi đè JSON đã có")
     ap.add_argument("--mark-done", action="store_true",
                     help="đánh dấu email_links đã chạy là 'done' (mặc định để 'new')")
+    ap.add_argument("--no-requeue", action="store_true",
+                    help="không đưa task PDF của HĐ vừa lấy về hàng đợi (mặc định đưa)")
     ap.add_argument("--import", dest="import_after", action="store_true",
                     help="chạy luôn web/invoice_job.py pdf sau khi tải xong")
     ap.add_argument("--dry-run", action="store_true", help="chỉ liệt kê, không mở trình duyệt")
@@ -342,7 +385,7 @@ def main() -> int:
 
     drop.mkdir(parents=True, exist_ok=True)
     try:
-        fetched, failed, ok_ids = asyncio.run(run_browser(args, jobs, drop))
+        fetched, failed, ok_ids, saved_keys = asyncio.run(run_browser(args, jobs, drop))
     except ImportError:
         log.error("Chưa có Playwright: pip install -r requirements-invoice.txt && playwright install chromium")
         return 2
@@ -353,6 +396,10 @@ def main() -> int:
     if args.mark_done and ok_ids:
         n = mark_done(ok_ids)
         log.info("Đánh dấu 'done' %d link", n)
+
+    if saved_keys and not args.no_requeue:
+        matched, n = requeue_keys(saved_keys)
+        log.info("Khớp %d HĐ trong DB → đưa %d task về hàng đợi PDF", matched, n)
 
     log.info("Xong: lấy %d, lỗi %d, bỏ qua %d → %s",
              fetched, failed, len(jobs) - fetched - failed, drop)

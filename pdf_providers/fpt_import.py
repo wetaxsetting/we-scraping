@@ -76,6 +76,10 @@ class FptAdapter(PdfAdapter):
         d = drop_dir()
         return d.is_dir() and any(d.glob("*.json"))
 
+    def pending_input_signature(self) -> tuple:
+        d = drop_dir()
+        return tuple(sorted(p.name for p in d.glob("*.json"))) if d.is_dir() else ()
+
     def fetch_xml(self, invoice: dict) -> bytes:
         """XML gốc kèm trong JSON /api/search (cùng nguồn với PDF). Không xóa/di chuyển JSON."""
         want = _key(invoice.get("nbmst"), invoice.get("khmshdon"), invoice.get("khhdon"),

@@ -401,3 +401,31 @@ def test_gdt_429_backs_off_instead_of_hammering(monkeypatch, tmp_path):
     invoice_job.xml_batch(_Fail([]), co, object(), breaker, 1, [_task(A, i) for i in range(1, 5)], stats, tmp_path)
     assert [s for s in slept if s >= 60] == [60, 120]          # nghỉ tăng dần sau mỗi 429
     assert stats["xml_ok"] == 2 and not breaker.open
+
+
+def test_idle_pdf_worker_requeues_new_drop_files(tmp_path, monkeypatch):
+    """Hộp chờ rỗng + JSON script vừa thả vào → worker tự requeue HĐ của adapter đó."""
+    monkeypatch.setenv("INVOICE_OUTPUT_DIR", str(tmp_path))
+    d = tmp_path / "manual" / "fpt"
+    d.mkdir(parents=True)
+    (d / "x.json").write_text("{}", encoding="utf-8")
+
+    class _Store(_WorkerStore):
+        def __init__(self):
+            super().__init__([])
+            self.requeues = []
+
+        def requeue(self, status, **kw):
+            self.requeues.append((status, kw))
+            return 1
+
+    store = _Store()
+    calls = {"n": 0}
+
+    def stop():
+        calls["n"] += 1
+        return calls["n"] > 3
+
+    invoice_job.run_worker(store, "pdf", tmp_path, idle=0, stop=stop)
+    assert ("no_source", {"task_type": "pdf", "mst_tcgp": "0104128565",
+                          "error_kind": "no_portal"}) in store.requeues

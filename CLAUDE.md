@@ -325,6 +325,9 @@ python -X utf8 web/fetch_missing_xml.py --csv docs/_missing_0318793907_2026.csv 
 # Lịch chạy tự động (Windows Task Scheduler, mặc định 06:30 / 12:30 / 19:00)
 powershell -ExecutionPolicy Bypass -File scripts\register_invoice_tasks.ps1
 
+# Lịch cho script batch cần trình duyệt (chỉ trên máy CÓ desktop và cùng output/ với worker PDF)
+powershell -ExecutionPolicy Bypass -File scripts\register_batch_tasks.ps1 [-Only FPT|Minvoice] [-EveryMinutes 30] [-StartNow]
+
 # Test phần hóa đơn (offline; test DB tự skip khi không có TEST_DATABASE_URL).
 # PowerShell không tự mở rộng tests/test_pdf_*.py → dùng -k thay vì glob.
 python -X utf8 -m pytest tests -q -k "invoice or xml_parser or fetch_pdf or pdf_ or mail or main_auto"
@@ -368,6 +371,7 @@ Khi chạy `fetch_pdf.py` luôn thêm `--company 1201496252`.
 | `pdf_providers/`                     | 1 adapter/NCC, đăng ký trong `__init__.py`; `common.py` (HTTP, `solve_captcha`, `check_pdf_is_invoice`)                                                                                                               |
 | `mail_reader.py` / `mail_ingest.py`  | Đọc IMAP (chỉ đọc), nhận mail HĐ, bóc XML/PDF/link; khớp vào HĐ trong DB                                                                                                                                              |
 | `scripts/register_invoice_tasks.ps1` | Đăng ký Task Scheduler                                                                                                                                                                                                |
+| `scripts/register_batch_tasks.ps1`   | Lịch cho `fpt_batch` / `minvoice_batch` (Interactive, cần desktop + cùng `output/` với worker PDF)                                                                                                                     |
 
 Thư mục output (`INVOICE_OUTPUT_DIR`, mặc định `output/`). Các thư mục `xml/`, `pdf/`, `temp/` dùng
 chung một cấu trúc:
@@ -436,6 +440,12 @@ từng công ty dưới **khóa toàn cục**, nên công ty cuối danh sách c
 hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh việc khỏi người làm việc:
 - `sync-lists` (3 lần/ngày): chỉ lấy danh sách → hộp chờ XML. Khóa riêng `SYNC_LOCK_KEY`: không
   chạy chồng chính nó, không chặn worker/`tick`. Ngày 5/15 vẫn tự `sweep`.
+- **Worker PDF tự nhặt file script thả vào (25/11):** khi hộp chờ rỗng, mỗi vòng (60 s) so
+  `_pending_input_signature()` (tên file trong `output/manual/fpt/*.json`, `output/manual/minvoice/*.pdf`);
+  danh sách **đổi** → `_requeue_pending_inputs` đưa HĐ `no_source/no_portal` của adapter đó về hộp chờ rồi
+  nhận việc ngay. Danh sách không đổi thì không requeue lại — file không khớp HĐ nào (nằm lại mãi) không
+  gây requeue toàn bộ task mỗi phút. `scripts/fpt_batch.py` và `scripts/minvoice_batch.py` còn tự
+  `requeue_tasks` đúng HĐ vừa lấy, nên không phụ thuộc bước này.
 - `worker --type xml|pdf` (chạy mãi): `claim_round_robin` nhận mỗi công ty tối đa `--per-company`
   HĐ mỗi mẻ (cũ trước) → công ty 10.000 HĐ không chặn công ty 30 HĐ. **Không** giữ khóa toàn cục:
   nhiều worker chạy song song, `SKIP LOCKED` lo chia việc. Kiểm trên PostgreSQL thật (bảng tạm):
@@ -456,6 +466,13 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
   Mail mỗi 30 phút, Worker XML/PDF, và từ 10/11 **WeInvoice API** `web/internal_api.py` (log
   `output/logs/internal_api_<yyyy-mm>.log`) + **WeInvoice Worker** `web/weinvoice_worker.py`; 4 task chạy mãi khởi động
   cùng máy, không giới hạn thời gian). Máy không chạy WeInvoice: thêm `-NoWeInvoice`. Đang chạy `tick` thì gỡ task đó đi cho khỏi trùng (chạy cùng lúc không hỏng dữ liệu).
+- **Lịch cho 2 script batch (25/11):** `scripts\register_batch_tasks.ps1` tạo `<Prefix> Batch FPT` và
+  `<Prefix> Batch M-Invoice` (mặc định mỗi 30 phút, `--limit 20`/`50`, lệch nhau 2 phút, log
+  `output/logs/{fpt,minvoice}_batch.log`; `-Unregister` để gỡ). Task kiểu **Interactive — chỉ chạy khi user
+  đăng nhập**, KHÔNG dùng `-RunWhenLoggedOff`: phiên S4U không có desktop, không mở được Chromium.
+  **Phải chạy trên đúng máy chạy worker PDF** (cùng `INVOICE_OUTPUT_DIR`): script ghi PDF/JSON vào
+  `output/manual/*` của máy đó, máy khác requeue task xong worker cũng không thấy file. Kèm theo: worker tự
+  nhặt file mới (mục worker ở trên) nên không cần `--import`.
 - **Mất kết nối DB** (17/11): 16/11 16:12 máy chủ PostgreSQL khởi động lại → worker XML/PDF/WeInvoice cùng thoát mã 1 và
   **Task Scheduler không bật lại** (`RestartCount` chỉ áp dụng khi task không khởi động được; tiến trình đã chạy rồi thoát
   thì tính là xong) → gần 1 ngày không tải XML/PDF, `sync-lists`/`mail` vẫn chạy nên nhìn ngoài không thấy gì. Nay:
@@ -668,6 +685,8 @@ Quy tắc khi viết adapter:
   `output/manual/fpt/<mst>_<sec>.json` (link trùng `sec` gộp; JSON sai → `_invalid/`); `--dry-run` liệt kê,
   `--import` gọi luôn `invoice_job.py pdf`, `--statuses new,mail_file` để lấy bản gốc thay PDF trong mail.
   `fpt.py` giữ để chạy tay 1 link. Không nối thẳng từ XML được: 0/1.732 XML FPT có mã/link, `sec` chỉ có trong mail.
+  Script requeue **đúng task** của HĐ vừa khớp (`doc.stax/form/serial/seq` → `tasks`, `--no-requeue` để tắt),
+  nên worker PDF nhặt ngay cả khi hộp chờ rỗng — không cần `--import`.
   **Định tuyến + XML bổ sung (25/11):** HĐ không có XML lẫn MSTTCGP (không mã, Thuế trả 500) trước đây ra
   `no_source` dù JSON đã có — nay `pick_adapter` lùi về `store.seller_link_hosts` (host link mail chứa
   `mst=<MST bán>`) + `pdf_providers.adapter_for_lookup_host` (adapter khai `lookup_hosts`, **không** khai `hosts`

@@ -817,3 +817,36 @@ def test_sco_wrong_captcha_gives_up_after_limit(monkeypatch, sco_caps):
     with pytest.raises(RuntimeError):
         api_client.fetch_invoices_subtype("t", "mua-mtt", "2026-09-01", "2026-09-30")
     assert len(sco_caps) == 5
+
+
+def test_pending_input_signature_tracks_drop_files(tmp_path, monkeypatch):
+    """Worker chỉ requeue khi danh sách file trong hộp chờ ĐỔI (file không khớp nằm lại không lặp)."""
+    monkeypatch.setenv("INVOICE_OUTPUT_DIR", str(tmp_path))
+    assert invoice_job._pending_input_signature() == ()
+    d = tmp_path / "manual" / "fpt"
+    d.mkdir(parents=True)
+    (d / "a.json").write_text("{}", encoding="utf-8")
+    assert ("fpt", ("a.json",)) in invoice_job._pending_input_signature()
+    (d / "a.json").unlink()
+    assert invoice_job._pending_input_signature() == ()
+
+
+def test_requeue_pending_inputs_only_when_drop_has_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("INVOICE_OUTPUT_DIR", str(tmp_path))
+
+    class _Store:
+        def __init__(self):
+            self.calls = []
+
+        def requeue(self, status, **kw):
+            self.calls.append((status, kw))
+            return 0
+
+    st = _Store()
+    assert invoice_job._requeue_pending_inputs(st) == 0 and st.calls == []
+    d = tmp_path / "manual" / "fpt"
+    d.mkdir(parents=True)
+    (d / "a.json").write_text("{}", encoding="utf-8")
+    invoice_job._requeue_pending_inputs(st)
+    assert ("no_source", {"task_type": "pdf", "mst_tcgp": "0104128565",
+                          "error_kind": "no_portal"}) in st.calls

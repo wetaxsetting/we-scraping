@@ -719,6 +719,33 @@ def _company_status(stats, breaker=None) -> str:
     return "ok"
 
 
+def _requeue_pending_inputs(store) -> int:
+    """Adapter có file người tải tay trong hộp chờ (FPT JSON, M-Invoice PDF…) → HĐ 'no_portal' thử lại."""
+    total = 0
+    for source_id in pdf_providers.available():
+        adapter = pdf_providers.get_adapter(source_id)
+        if not getattr(adapter, "has_pending_input", lambda: False)():
+            continue
+        for mst_tcgp in adapter.mst_tcgp:
+            n = store.requeue("no_source", task_type="pdf", mst_tcgp=mst_tcgp, error_kind="no_portal")
+            if n:
+                log.info("%s có file chờ nhập → %d HĐ MSTTCGP %s quay lại hàng đợi PDF",
+                         source_id, n, mst_tcgp)
+            total += n
+    return total
+
+
+def _pending_input_signature() -> tuple:
+    """Tên file trong các hộp chờ (adapter nào có). Rỗng = không có gì mới để nhập."""
+    sig = []
+    for source_id in pdf_providers.available():
+        adapter = pdf_providers.get_adapter(source_id)
+        names = getattr(adapter, "pending_input_signature", lambda: ())()
+        if names:
+            sig.append((source_id, tuple(names)))
+    return tuple(sig)
+
+
 def _prepare_queues(store) -> None:
     reclaimed = store.reclaim_stale()
     if reclaimed:
@@ -730,15 +757,7 @@ def _prepare_queues(store) -> None:
         if n:
             log.info("MSTTCGP %s đã có adapter → %d HĐ quay lại hàng đợi PDF", mst_tcgp, n)
     # Adapter nhận file người tải tay (vd FPT: JSON /api/search) có file mới → HĐ 'no_portal' thử lại
-    for source_id in pdf_providers.available():
-        adapter = pdf_providers.get_adapter(source_id)
-        if not getattr(adapter, "has_pending_input", lambda: False)():
-            continue
-        for mst_tcgp in adapter.mst_tcgp:
-            n = store.requeue("no_source", task_type="pdf", mst_tcgp=mst_tcgp, error_kind="no_portal")
-            if n:
-                log.info("%s có file chờ nhập → %d HĐ MSTTCGP %s quay lại hàng đợi PDF",
-                         source_id, n, mst_tcgp)
+    _requeue_pending_inputs(store)
     # HĐ máy tính tiền không có MSTTCGP: định tuyến được (link / NCC quen của người bán) → chạy lại
     routable = [t["task_id"] for t in store.no_source_without_tcgp() if pick_adapter(store, t) is not None]
     n = store.requeue_tasks(routable)
@@ -1070,6 +1089,7 @@ def run_worker(store, task_type: str, out_dir: Path, *, per_company: int = WORKE
     run = _WorkerRun(store, f"worker-{task_type}")
     cooldown: dict = {}         # MST → time.monotonic() hết nghỉ
     claimed: list = []
+    last_input_sig: tuple = ()  # hộp chờ file tay (FPT JSON / M-Invoice PDF) đã requeue lần trước
     log_month = f"{today_vn():%Y-%m}"
     reclaimed = store.reclaim_stale()
     if reclaimed:
@@ -1088,6 +1108,15 @@ def run_worker(store, task_type: str, out_dir: Path, *, per_company: int = WORKE
             claimed = store.claim_round_robin(task_type, per_company, batch, exclude_msts=list(cooldown))
             if not claimed:
                 run.close()
+                # Hộp chờ rỗng nhưng có file script vừa thả vào (FPT JSON, M-Invoice PDF) → requeue
+                # rồi nhận việc ngay. Chỉ khi danh sách file ĐỔI: file không khớp HĐ nào nằm lại
+                # mãi cũng không làm requeue toàn bộ task mỗi phút.
+                if task_type == "pdf" and not once:
+                    sig = _pending_input_signature()
+                    if sig and sig != last_input_sig:
+                        last_input_sig = sig
+                        if _requeue_pending_inputs(store):
+                            continue
                 if once:
                     break
                 time.sleep(idle)

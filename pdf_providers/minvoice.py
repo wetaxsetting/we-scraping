@@ -198,6 +198,10 @@ class MinvoiceAdapter(PdfAdapter):
         self._announced = True
         return True
 
+    def pending_input_signature(self) -> tuple:
+        d = drop_dir()
+        return tuple(sorted(p.name for p in d.glob("*.pdf"))) if d.is_dir() else ()
+
     def invoice_from_link(self, url: str, code, mail_text: str):
         """Link trang chủ + "MST người bán" + "Số bảo mật" trong mail (không mở link). Thiếu 1 trong 2 → None."""
         lines = (mail_text or "").splitlines()
