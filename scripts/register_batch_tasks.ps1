@@ -1,28 +1,28 @@
 <#
 .SYNOPSIS
-  Dang ky Task Scheduler cho 2 script tai PDF bang trinh duyet (can phien desktop).
+  Dang ky 1 task Scheduler chay tuan tu 2 script tai PDF bang trinh duyet (can phien desktop).
 
 .DESCRIPTION
-  Tao 2 task, ten bat dau bang -Prefix (mac dinh "Invoice"):
-    <Prefix> Batch FPT        scripts\fpt_batch.py        moi -EveryMinutes phut, --limit -FptLimit
-    <Prefix> Batch M-Invoice  scripts\minvoice_batch.py  moi -EveryMinutes phut, --limit -MinvoiceLimit
+  Tao 1 task "<Prefix> Batch Browser" goi scripts\batch_all.py:
+      fpt_batch.py --limit <FptLimit>       (truoc)
+      minvoice_batch.py --limit <MinvoiceLimit>  (sau)
 
   Hai cong nay bat reCAPTCHA v3 -> script mo Chromium CO GIAO DIEN (profile fpt_profile /
   minvoice_profile). Vi vay task dang ky kieu Interactive: CHI chay khi user dang dang nhap.
   May chu khong co phien desktop thi DUNG dang ky (hoac chi chay tay trong phien RDP).
 
   Khong dung -RunWhenLoggedOff (S4U) nhu register_queue_tasks.ps1: phien S4U khong co desktop,
-  Chromium khong mo duoc, va reCAPTCHA v3 se cham diem thap.
+  Chromium khong mo duoc.
 
-  Script chi tai file vao <INVOICE_OUTPUT_DIR>\manual\{fpt,minvoice}; viec nhap DB do worker PDF
-  (worker tu nhat file moi trong <= 60 s; fpt_batch/minvoice_batch con tu requeue dung HD vua lay).
+  Script chi tai file vao <INVOICE_OUTPUT_DIR>\manual\{fpt,minvoice}; worker PDF tu nhat file moi
+  trong <= 60 s (khong can --import).
 
-  Log: output\logs\fpt_batch.log, output\logs\minvoice_batch.log (ghi noi tiep qua cac lan chay).
+  Log: output\logs\fpt_batch.log, output\logs\minvoice_batch.log (noi tiep qua cac lan chay).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\register_batch_tasks.ps1
   powershell -ExecutionPolicy Bypass -File scripts\register_batch_tasks.ps1 -EveryMinutes 60 -MinvoiceLimit 100
-  powershell -ExecutionPolicy Bypass -File scripts\register_batch_tasks.ps1 -Only FPT
+  powershell -ExecutionPolicy Bypass -File scripts\register_batch_tasks.ps1 -Only Minvoice
   powershell -ExecutionPolicy Bypass -File scripts\register_batch_tasks.ps1 -StartNow
   powershell -ExecutionPolicy Bypass -File scripts\register_batch_tasks.ps1 -Unregister
 #>
@@ -40,12 +40,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$names = @{
-    Fpt = "$Prefix Batch FPT"; Minvoice = "$Prefix Batch M-Invoice"
-}
+$name = "$Prefix Batch Browser"
+# Ten cu (ban 2 task rieng) — go luon khi -Unregister / dang ky lai
+$legacy = @("$Prefix Batch FPT", "$Prefix Batch M-Invoice")
 
 if ($Unregister) {
-    foreach ($n in $names.Values) {
+    foreach ($n in @($name) + $legacy) {
         if (Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue) {
             Stop-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue
             Unregister-ScheduledTask -TaskName $n -Confirm:$false
@@ -63,13 +63,8 @@ if (-not (Test-Path (Join-Path $root ".env"))) {
     Write-Warning "Chua co file .env o $root (job se bao thieu DATABASE_URL)"
 }
 
-$scripts = @{
-    Fpt = Join-Path $root "scripts\fpt_batch.py"
-    Minvoice = Join-Path $root "scripts\minvoice_batch.py"
-}
-foreach ($k in $scripts.Keys) {
-    if (-not (Test-Path $scripts[$k])) { throw "Khong thay $($scripts[$k])" }
-}
+$runner = Join-Path $root "scripts\batch_all.py"
+if (-not (Test-Path $runner)) { throw "Khong thay $runner" }
 
 if (-not $Python) {
     $py = (Get-Command python -ErrorAction Stop).Source
@@ -84,37 +79,37 @@ if (-not $Python) {
 $logDir = Join-Path $root "output\logs"
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
 
-function New-BatchTask([string]$name, [string]$script, [string]$log, [int]$limit,
-                       [int]$startAfterMinutes, [string]$desc) {
-    $action = New-ScheduledTaskAction -Execute $Python `
-        -Argument "-X utf8 `"$script`" --limit $limit --log `"$log`"" -WorkingDirectory $root
-    # 2 task lech nhau 2 phut de khong mo 2 Chromium cung luc
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes($startAfterMinutes) `
-        -RepetitionInterval (New-TimeSpan -Minutes $EveryMinutes)
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
-        -ExecutionTimeLimit (New-TimeSpan -Minutes 90) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    # KHONG truyen Principal: mac dinh la "chi chay khi user dang dang nhap" (Interactive)
-    Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings `
-        -Description $desc -Force | Out-Null
-    Write-Output "  $name : moi $EveryMinutes phut, limit $limit"
+# Go task cu (neu co) de khong chay trung
+foreach ($n in $legacy) {
+    if (Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $n -Confirm:$false
+        Write-Output "Da go task cu '$n'"
+    }
 }
+
+$onlyArg = if ($Only -eq "Both") { "" } else { " --only $($Only.ToLower())" }
+$action = New-ScheduledTaskAction -Execute $Python `
+    -Argument "-X utf8 `"$runner`" --fpt-limit $FptLimit --minvoice-limit $MinvoiceLimit --log-dir `"$logDir`"$onlyArg" `
+    -WorkingDirectory $root
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
+    -RepetitionInterval (New-TimeSpan -Minutes $EveryMinutes)
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 90) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+
+# KHONG truyen Principal: mac dinh "chi chay khi user dang dang nhap" (Interactive)
+Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings `
+    -Description "Tai JSON/PDF FPT + M-Invoice bang Chromium (reCAPTCHA v3), tuan tu; worker PDF tu nhap" `
+    -Force | Out-Null
 
 Write-Output "Da dang ky (chi chay khi '$env:USERNAME' dang dang nhap):"
-if ($Only -ne "Minvoice") {
-    New-BatchTask $names.Fpt $scripts.Fpt (Join-Path $logDir "fpt_batch.log") $FptLimit 2 `
-        "Tai JSON /api/search cua FPT cho link mail (?mst=&sec=) -> hop cho adapter fpt"
-}
-if ($Only -ne "FPT") {
-    New-BatchTask $names.Minvoice $scripts.Minvoice (Join-Path $logDir "minvoice_batch.log") `
-        $MinvoiceLimit 4 "Tai PDF M-Invoice qua cong tra cuu (reCAPTCHA v3) -> hop cho adapter minvoice"
-}
+Write-Output "  $name : moi $EveryMinutes phut (FPT $FptLimit, M-Invoice $MinvoiceLimit, only=$Only)"
 Write-Output "Python: $Python"
 Write-Output "Log: $logDir\{fpt,minvoice}_batch.log"
-Write-Output "Kiem tra: (Get-ScheduledTask -TaskName '$Prefix Batch *').Actions | Format-List Execute,Arguments,WorkingDirectory"
-Write-Output "Chi chay khi dang nhap (khong S4U). May khong co desktop: dung dang ky."
+Write-Output "Kiem tra: (Get-ScheduledTask -TaskName '$name').Actions | Format-List Execute,Arguments,WorkingDirectory"
+Write-Output "May khong co desktop: dung dang ky (phien S4U khong mo duoc Chromium)."
 
 if ($StartNow) {
-    if ($Only -ne "Minvoice") { Start-ScheduledTask -TaskName $names.Fpt }
-    if ($Only -ne "FPT") { Start-ScheduledTask -TaskName $names.Minvoice }
+    Start-ScheduledTask -TaskName $name
     Write-Output "Da bat 1 lan ngay."
 }

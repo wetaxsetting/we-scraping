@@ -371,7 +371,7 @@ Khi chạy `fetch_pdf.py` luôn thêm `--company 1201496252`.
 | `pdf_providers/`                     | 1 adapter/NCC, đăng ký trong `__init__.py`; `common.py` (HTTP, `solve_captcha`, `check_pdf_is_invoice`)                                                                                                               |
 | `mail_reader.py` / `mail_ingest.py`  | Đọc IMAP (chỉ đọc), nhận mail HĐ, bóc XML/PDF/link; khớp vào HĐ trong DB                                                                                                                                              |
 | `scripts/register_invoice_tasks.ps1` | Đăng ký Task Scheduler                                                                                                                                                                                                |
-| `scripts/register_batch_tasks.ps1`   | Lịch cho `fpt_batch` / `minvoice_batch` (Interactive, cần desktop + cùng `output/` với worker PDF)                                                                                                                     |
+| `scripts/register_batch_tasks.ps1`   | Lịch cho `batch_all.py` (FPT + M-Invoice tuần tự; Interactive, cần desktop + cùng `output/` với worker PDF)                                                                                                             |
 
 Thư mục output (`INVOICE_OUTPUT_DIR`, mặc định `output/`). Các thư mục `xml/`, `pdf/`, `temp/` dùng
 chung một cấu trúc:
@@ -466,10 +466,13 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
   Mail mỗi 30 phút, Worker XML/PDF, và từ 10/11 **WeInvoice API** `web/internal_api.py` (log
   `output/logs/internal_api_<yyyy-mm>.log`) + **WeInvoice Worker** `web/weinvoice_worker.py`; 4 task chạy mãi khởi động
   cùng máy, không giới hạn thời gian). Máy không chạy WeInvoice: thêm `-NoWeInvoice`. Đang chạy `tick` thì gỡ task đó đi cho khỏi trùng (chạy cùng lúc không hỏng dữ liệu).
-- **Lịch cho 2 script batch (25/11):** `scripts\register_batch_tasks.ps1` tạo `<Prefix> Batch FPT` và
-  `<Prefix> Batch M-Invoice` (mặc định mỗi 30 phút, `--limit 20`/`50`, lệch nhau 2 phút, log
-  `output/logs/{fpt,minvoice}_batch.log`; `-Unregister` để gỡ). Task kiểu **Interactive — chỉ chạy khi user
-  đăng nhập**, KHÔNG dùng `-RunWhenLoggedOff`: phiên S4U không có desktop, không mở được Chromium.
+- **Lịch cho batch trình duyệt (25/11):** `scripts\register_batch_tasks.ps1` tạo **1 task**
+  `<Prefix> Batch Browser` chạy `scripts/batch_all.py` — FPT rồi M-Invoice **tuần tự** (mặc định mỗi 30 phút,
+  `--fpt-limit 20 --minvoice-limit 50`, log `output/logs/{fpt,minvoice}_batch.log`; `-Unregister` gỡ cả tên
+  cũ `Batch FPT`/`Batch M-Invoice`). Tuần tự để không mở 2 Chromium cùng lúc; script con không có việc thì
+  thoát trong 1–2 s. Mã thoát: 0 sạch, 1 có HĐ lỗi (partial), 2 không chạy được (thiếu Playwright/DB).
+  Task kiểu **Interactive — chỉ chạy khi user đăng nhập**, KHÔNG dùng `-RunWhenLoggedOff`: phiên S4U
+  không có desktop, không mở được Chromium.
   **Phải chạy trên đúng máy chạy worker PDF** (cùng `INVOICE_OUTPUT_DIR`): script ghi PDF/JSON vào
   `output/manual/*` của máy đó, máy khác requeue task xong worker cũng không thấy file. Kèm theo: worker tự
   nhặt file mới (mục worker ở trên) nên không cần `--import`.
