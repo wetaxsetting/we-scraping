@@ -296,6 +296,79 @@ def _claim_ids(store, task_type: str, company_mst: str, invoice_ids: list) -> li
         return InvoiceStore._claimed_rows(cur, claimed)
 
 
+SYNC_WAIT_OTHERS_SECONDS = 180  # HĐ worker XML nền đang tải dở → chờ tối đa chừng này rồi mới đếm kết quả
+SYNC_WAIT_POLL = 3.0
+
+
+def _xml_state(store, invoice_ids: list) -> list[dict]:
+    """Mỗi HĐ: đã có XML chưa + task XML (trạng thái, loại lỗi) — để đếm kết quả thật, kể cả phần worker khác tải."""
+    if not invoice_ids:
+        return []
+    with store._tx() as cur:
+        cur.execute("""
+            SELECT i.id, x.invoice_id IS NOT NULL AS has_xml, t.status, t.error_kind
+              FROM invoices i
+              LEFT JOIN invoice_xml x ON x.invoice_id = i.id
+              LEFT JOIN tasks t ON t.invoice_id = i.id AND t.task_type = 'xml'
+             WHERE i.id = ANY(%s)
+        """, (list(invoice_ids),))
+        return [dict(r) for r in cur.fetchall()]
+
+
+# HĐ chưa có XML → nhóm lý do người dùng đọc được (thứ tự = thứ tự in trong câu tóm tắt)
+_MISSING_REASONS = (
+    ("running", "đang tải tiếp ở nền, xem lại sau ít phút"),
+    ("not_ready", "Cục Thuế chưa có XML (HĐ mới cấp mã), hệ thống tự tải lại sau"),
+    ("summary_only", "không mã gửi theo bảng tổng hợp — Cục Thuế không có XML, chờ XML từ email người bán"),
+    ("retry", "lỗi tạm thời khi tải, hệ thống tự thử lại"),
+    ("failed", "tải lỗi nhiều lần — bấm \"Lấy XML còn thiếu\" để thử lại"),
+)
+
+
+def xml_outcome(rows: list[dict]) -> dict:
+    """{have, total, missing: {lý do: n}, note}. note rỗng khi không thiếu HĐ nào."""
+    missing = Counter()
+    have = 0
+    for r in rows:
+        if r.get("has_xml"):
+            have += 1
+            continue
+        st, kind = r.get("status"), r.get("error_kind")
+        if st == "running":
+            missing["running"] += 1
+        elif kind in ("summary_only",) or st == "no_source":
+            missing["summary_only"] += 1
+        elif st == "dead":
+            missing["failed"] += 1
+        elif kind == "not_ready":
+            missing["not_ready"] += 1
+        else:
+            missing["retry"] += 1
+    return {"have": have, "total": len(rows), "missing": dict(missing), "note": missing_note(missing)}
+
+
+def missing_note(missing: dict) -> str:
+    """Câu tóm tắt HĐ còn thiếu XML theo lý do; rỗng khi không thiếu."""
+    parts = [f"{missing[k]} HĐ {text}" for k, text in _MISSING_REASONS if missing.get(k)]
+    if not parts:
+        return ""
+    return f"Còn {sum(missing.values())} HĐ chưa có XML: " + "; ".join(parts) + "."
+
+
+def _wait_others(store, job, ids: list, *, limit: float = None, poll: float = None, sleep=time.sleep,
+                 clock=time.monotonic) -> list[dict]:
+    """Chờ worker XML nền tải nốt các HĐ nó đã nhận (task 'running'), báo tiến độ theo XML thật có trong DB."""
+    limit = SYNC_WAIT_OTHERS_SECONDS if limit is None else limit
+    poll = SYNC_WAIT_POLL if poll is None else poll
+    deadline = clock() + limit
+    rows = _xml_state(store, ids)
+    while any(not r["has_xml"] and r["status"] == "running" for r in rows) and clock() < deadline:
+        job.report(xml_done=sum(1 for r in rows if r["has_xml"]))
+        sleep(poll)
+        rows = _xml_state(store, ids)
+    return rows
+
+
 def _xml_pending_ids(store, company_mst: str, start: date, end: date) -> list:
     with store._tx() as cur:
         cur.execute("""
@@ -808,7 +881,9 @@ class Worker:
     def _handle(self, job: Job, row: dict) -> None:
         try:
             status, result = self.handlers[row["rqst_type"]](job)
-            self.reqs.finish(job.id, status, result, None, job.run_id)
+            # "note" = câu giải thích cho người dùng (vd vì sao còn HĐ thiếu XML) → err_msg, API trả ở trường error
+            note = (result or {}).get("note") if isinstance(result, dict) else None
+            self.reqs.finish(job.id, status, result, note or None, job.run_id)
             log.info("WeInvoice #%s %s → %s %s", job.id, row["rqst_type"], status, result)
         except Cancelled:
             self.reqs.finish(job.id, "CANCELLED", dict(job.progress) or None, "Người dùng đã hủy", job.run_id)
@@ -976,6 +1051,7 @@ class Worker:
         status = "error"
         breaker = job_policy.CircuitBreaker()
         done_months = []
+        outcome = Counter()             # have / total / missing.<lý do> cộng dồn các tháng
         try:
             tokens = invoice_job.TokenProvider(self.store, company, stats)
             job.report("login", month=None, listed=0, xml_done=0, xml_total=0)
@@ -991,10 +1067,12 @@ class Worker:
                     _write_coverage(self.store, self.reqs.s, job.mst, st, ym, start, end,
                                     stats["listed"] - listed if ok else None)
                     job.report(listed=stats["listed"])
-                ids = _xml_pending_ids(self.store, job.mst, start, end)
-                job.report("xml", xml_total=len(ids), xml_done=0)
+                all_ids = _xml_pending_ids(self.store, job.mst, start, end)
+                ids = list(all_ids)
+                job.report("xml", xml_total=len(all_ids), xml_done=0)
                 handled = 0
                 while ids and not breaker.open:
+                    # HĐ worker XML nền đã nhận thì SKIP LOCKED bỏ qua → không đếm ở đây, chờ nó ở _wait_others
                     batch = _claim_ids(self.store, "xml", job.mst, ids[:XML_BATCH])
                     ids = ids[XML_BATCH:]
                     if not batch:
@@ -1002,16 +1080,34 @@ class Worker:
                     handled += invoice_job.xml_batch(self.store, company, tokens, breaker, job.run_id, batch,
                                                      stats, self.out_dir)
                     job.report(xml_done=handled)
+                if ym not in done_months:
                     done_months.append(ym)
+                # Đếm theo XML THẬT có trong DB (kể cả HĐ worker nền tải), không theo số mình tự tải (20/11:
+                # 0319232069 báo "38/58 — Hoàn tất" trong khi cả 58 đã có XML, người dùng không biết vì sao)
+                res = xml_outcome(_wait_others(self.store, job, all_ids))
+                job.report(xml_done=res["have"])
+                outcome["have"] += res["have"]
+                outcome["total"] += res["total"]
+                for k, n in res["missing"].items():
+                    outcome["missing." + k] += n
                 if breaker.open:
                     break
             job.report("done")
-            status = "partial" if (stats["sync_errors"] or stats["xml_failed"] or breaker.open) else "ok"
+            failed = outcome["missing.failed"] or outcome["missing.retry"]
+            status = "partial" if (stats["sync_errors"] or failed or breaker.open) else "ok"
         finally:
             self._end_run(job, status, stats, {"months": done_months})
-        result = {"new": stats["new_invoices"], "updated": 0, "xml": stats["xml_ok"],
+        missing = {k.split(".", 1)[1]: n for k, n in outcome.items() if k.startswith("missing.") and n}
+        note = missing_note(missing)
+        if stats["sync_errors"]:
+            note = (note + " " if note else "") + (
+                f"{stats['sync_errors']} lần lấy danh sách từ Cục Thuế bị lỗi — chạy lại để lấy nốt.")
+        elif breaker.open:
+            note = (note + " " if note else "") + "Cục Thuế lỗi liên tục nên đã dừng giữa chừng — chạy lại để lấy nốt."
+        result = {"new": stats["new_invoices"], "updated": 0, "xml": outcome["have"],
+                  "xml_total": outcome["total"], "xml_this_run": stats["xml_ok"], "xml_missing": missing,
                   "listed": stats["listed"], "xml_failed": stats["xml_failed"],
-                  "sync_errors": stats["sync_errors"], "months": done_months}
+                  "sync_errors": stats["sync_errors"], "months": done_months, "note": note}
         return ("PARTIAL" if status == "partial" else "DONE"), result
 
     # -- FETCH_XML ---------------------------------------------------------

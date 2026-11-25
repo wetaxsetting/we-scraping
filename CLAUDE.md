@@ -1023,6 +1023,12 @@ tra HĐ, rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partn
 - **Worker yêu cầu** (09/11, `web/weinvoice_worker.py`, record `docs/issues/weinvoice-engine-request-worker-2026-11-09.md` của api):
   SYNC theo tháng (danh sách + XML, ghi `winv_sync_cvrg`), FETCH_XML / FETCH_PDF chạy ngay (mã/link nhập tay thắng mã đoán từ XML),
   IMPORT (lô `winv_upld_*` hoặc 1 XML của 1 HĐ; NEW/MERGED/DUPLICATE/FOREIGN/PDF_PENDING/ERROR), TEST_DATA (thư mục TestData).
+  **25/11 SYNC đếm XML thật:** `_claim_ids` dùng SKIP LOCKED nên HĐ worker XML nền đang giữ bị bỏ qua → trước đây báo
+  "Hoàn tất 38/58" dù cả 58 đã có XML (0319232069). Nay sau mỗi tháng `_wait_others` chờ task `running` của worker khác
+  (tối đa 180 s) rồi `xml_outcome` đếm theo `invoice_xml` thật; `rslt_data.xml` = HĐ đã có XML, `xml_missing` theo lý do
+  (`running` / `not_ready` / `summary_only` / `retry` / `failed`), câu tóm tắt tiếng Việt ở `rslt_data.note` **và `err_msg`**
+  (API trả ở `SyncRunItem.message`, web hiện trong dialog + Lịch sử). PARTIAL chỉ khi lỗi thật (`failed`/`retry`, lỗi danh sách,
+  ngắt mạch); thiếu vì Thuế chưa có XML / HĐ không mã vẫn DONE kèm câu lý do.
   **11/11:** HĐ đã có XML/PDF trong DB nhưng **máy đang chạy không có file** (engine máy khác tải) → IMPORT ghi file nạp vào
   đúng `xml_path`/`pdf_path` đã lưu, báo MERGED "Bổ sung file … (máy chủ chưa có file)", không parse lại; có file thì vẫn DUPLICATE.
   **Chỉ chạy `weinvoice_worker.py` trên máy có thư mục lưu trữ của api (.13)**: worker máy khác nhận yêu cầu thì không đọc

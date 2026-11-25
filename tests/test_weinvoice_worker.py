@@ -227,3 +227,54 @@ def test_job_params_tolerate_non_dict():
     assert job.params == {}
     assert ww.Worker.params_list(ww.Job(FakeRequests(None), {**ROW, "rqst_prmt": {"invoice_ids": "1"}}),
                                  "invoice_ids") == []
+
+
+# ---------------------------------------------------------------- SYNC: đếm XML thật, ghi lý do còn thiếu (25/11)
+
+def test_xml_outcome_counts_real_xml_and_explains_missing():
+    rows = ([{"has_xml": True, "status": "done", "error_kind": None}] * 58
+            + [{"has_xml": False, "status": "pending", "error_kind": "not_ready"}] * 8
+            + [{"has_xml": False, "status": "no_source", "error_kind": "summary_only"}] * 2
+            + [{"has_xml": False, "status": "running", "error_kind": None}]
+            + [{"has_xml": False, "status": "dead", "error_kind": "server"}])
+    out = ww.xml_outcome(rows)
+    assert out["have"] == 58 and out["total"] == 70
+    assert out["missing"] == {"not_ready": 8, "summary_only": 2, "running": 1, "failed": 1}
+    assert out["note"].startswith("Còn 12 HĐ chưa có XML: 1 HĐ đang tải tiếp ở nền")
+    assert "8 HĐ Cục Thuế chưa có XML" in out["note"] and "2 HĐ không mã" in out["note"]
+
+
+def test_xml_outcome_no_note_when_complete():
+    assert ww.xml_outcome([{"has_xml": True, "status": "done", "error_kind": None}] * 3)["note"] == ""
+    assert ww.missing_note({}) == ""
+
+
+def test_wait_others_waits_for_background_worker_then_counts(monkeypatch):
+    """HĐ worker XML nền đã nhận (SKIP LOCKED) → sync chờ nó xong rồi mới đếm (0319232069: 38/58 → 58/58)."""
+    states = [
+        [{"has_xml": True, "status": "done"}, {"has_xml": False, "status": "running"}],
+        [{"has_xml": True, "status": "done"}, {"has_xml": False, "status": "running"}],
+        [{"has_xml": True, "status": "done"}, {"has_xml": True, "status": "done"}],
+    ]
+    monkeypatch.setattr(ww, "_xml_state", lambda store, ids: states.pop(0))
+    reported, slept = [], []
+
+    class _Job:
+        def report(self, step=None, **p):
+            reported.append(p)
+
+    rows = ww._wait_others(object(), _Job(), [1, 2], limit=60, poll=1, sleep=slept.append, clock=lambda: 0)
+    assert all(r["has_xml"] for r in rows)
+    assert slept == [1, 1] and reported == [{"xml_done": 1}, {"xml_done": 1}]
+
+
+def test_wait_others_gives_up_after_limit(monkeypatch):
+    monkeypatch.setattr(ww, "_xml_state", lambda store, ids: [{"has_xml": False, "status": "running"}])
+    t = iter([0, 10, 200, 400])
+
+    class _Job:
+        def report(self, step=None, **p):
+            pass
+
+    rows = ww._wait_others(object(), _Job(), [1], limit=180, poll=1, sleep=lambda s: None, clock=lambda: next(t))
+    assert rows[0]["status"] == "running"                 # hết giờ → trả trạng thái hiện có, lý do "đang tải ở nền"
