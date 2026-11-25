@@ -97,3 +97,19 @@ docs/WeInvoice_UI_Spec_v1.0/**/*.tsbuildinfo
 docs/WeInvoice_UI_Spec_v1.0/TestData/**
 !docs/WeInvoice_UI_Spec_v1.0/TestData/**/
 !docs/WeInvoice_UI_Spec_v1.0/TestData/**/.gitkeep
+
+# WeInvoice UI Spec v1.1 (PO 20/11): giữ bản bàn giao (00_*, 01, 02, bat, 2 zip, anh_so_sanh/) + weinvoice-web/
+# (trùng 100% WeInvoice_UI_Source_v1.1.zip). Bỏ prototype giải nén tay ngay trong thư mục (web/, server.ps1,
+# HUONG_DAN.txt — trùng 100% WeInvoice_Prototype_v1.1.zip), thư mục bat sinh ra, file build và gói ngoài
+# docs/WeInvoice_UI_Spec_v1.1.zip (trùng 100% thư mục). TestData/ chỉ giữ thư mục như v1.0.
+docs/WeInvoice_UI_Spec_v1.1.zip
+docs/WeInvoice_UI_Spec_v1.1/web/
+docs/WeInvoice_UI_Spec_v1.1/server.ps1
+docs/WeInvoice_UI_Spec_v1.1/HUONG_DAN.txt
+docs/WeInvoice_UI_Spec_v1.1/WeInvoice_Prototype/
+docs/WeInvoice_UI_Spec_v1.1/**/node_modules/
+docs/WeInvoice_UI_Spec_v1.1/**/.next/
+docs/WeInvoice_UI_Spec_v1.1/**/*.tsbuildinfo
+docs/WeInvoice_UI_Spec_v1.1/TestData/**
+!docs/WeInvoice_UI_Spec_v1.1/TestData/**/
+!docs/WeInvoice_UI_Spec_v1.1/TestData/**/.gitkeep

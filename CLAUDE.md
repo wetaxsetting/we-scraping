@@ -6,7 +6,7 @@ Project gồm 2 phần, mô tả riêng bên dưới:
 - **PHẦN 2 – Xử lý hóa đơn (XML → PDF):** đăng nhập hoadondientu.gdt.gov.vn bằng model captcha
   → tải XML → parse theo QĐ 1233 → lưu PostgreSQL → lấy PDF bản gốc (site tra cứu NCC / mail).
 
-PHẦN 3 (cuối file) là đặc tả sản phẩm **WeInvoice** của PO (UI Spec v1.0): sản phẩm dùng dữ liệu của PHẦN 2,
+PHẦN 3 (cuối file) là đặc tả sản phẩm **WeInvoice** của PO (UI Spec v1.1, 20/11; v1.0 giữ để tham khảo): sản phẩm dùng dữ liệu của PHẦN 2,
 P1 demo 23/12/2026.
 
 ## Chung
@@ -843,14 +843,19 @@ mail trong khoảng đó mất luôn — tăng `INVOICE_MAIL_DAYS` nếu dự ki
 
 ---
 
-# PHẦN 3 – WEINVOICE (UI SPEC v1.0)
+# PHẦN 3 – WEINVOICE (UI SPEC v1.1)
 
-Đặc tả sản phẩm **WeInvoice** do PO WeCMS bàn giao 30/10/2026 (file Roadmap 02/11/2026). PHẦN 2 là nguồn dữ liệu
-(engine + nghiên cứu P0) cho sản phẩm này. **Giao diện + quy tắc nghiệp vụ (file 02) là bắt buộc; kiến trúc, CSDL,
-API, engine do Dev tự quyết.** Thấy vô lý / không khả thi → phản hồi PO, PO ra bản spec mới (v1.1…).
-Chỉ sửa bộ spec khi user yêu cầu, và ghi lại ở mục "Đã sửa" bên dưới (2 file zip giữ nguyên bản gốc v1.0).
+Đặc tả sản phẩm **WeInvoice** do PO WeCMS bàn giao: v1.0 ngày 30/10/2026 (file Roadmap 02/11/2026), **v1.1 ngày 20/11/2026
+thay cho v1.0** (chỉ đổi màn Hoá đơn mua vào / bán ra, xem 3.1). PHẦN 2 là nguồn dữ liệu (engine + nghiên cứu P0) cho sản
+phẩm này. **Giao diện + quy tắc nghiệp vụ (file 02) là bắt buộc; kiến trúc, CSDL, API, engine do Dev tự quyết.** Thấy vô lý /
+không khả thi → phản hồi PO, PO ra bản spec mới. Chỉ sửa bộ spec khi user yêu cầu, và ghi lại ở mục "Đã sửa" bên dưới.
+Bản gốc chưa sửa của v1.0 chỉ còn ở 2 thư mục giải nén tay `WeInvoice_Prototype_v1.0/`, `WeInvoice_UI_Source_v1.0/`
+(gitignore; 2 zip v1.0 không còn trong thư mục) — đừng xoá.
 
-**Đã sửa so với bản v1.0 (02/11/2026, theo user):**
+**Đã sửa so với bản v1.0 (02/11/2026, theo user).** Chỉ sửa trên bản v1.0 trong repo. **v1.1 PO dựng từ bản gốc v1.0 nên
+không mang các sửa này** (kiểm 25/11): file 02 v1.1 vẫn ghi 138 NCC, bỏ dòng tiền tệ + KKKNT ở 3.3, rủi ro 3.7 không có KKKNT,
+§3.1 vẫn "tối đa 5 MST — cần chốt"; `lib/types.ts` y hệt gốc (`currency: "VND" | "USD"`, `vatRate` không có −2),
+`lib/providers.ts` vẫn 138 dòng. Dev vẫn làm theo các sửa dưới đây (user đã chốt); bộ v1.1 trong repo **không sửa** (user 25/11: "không cần sửa gì"). Riêng VNISC: v1.1 không kèm Roadmap mới, file Roadmap trong repo đã sửa.
 - Danh mục NCC 138 → **144** (`weinvoice-web/lib/providers.ts` stt 139–144, `02` mục 3.4): THACO 3600252847,
   VETC thu phí 0107500414, FPT Retail 0311609355, Genuwin 0304248595, Paris Baguette 0310634327 (phần mềm Genuwin),
   Thế Giới Di Động 0306731335 (tên pháp nhân + trang tra cứu còn phải xác nhận).
@@ -863,22 +868,42 @@ Chỉ sửa bộ spec khi user yêu cầu, và ghi lại ở mục "Đã sửa" 
 
 ## 3.1 Bộ tài liệu
 
-| File (`docs/`)                                      | Nội dung                                                                                                                                                                                      |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WeInvoice_UI_Spec_v1.0/00_DOC_TRUOC.md`            | Đọc trước: phải theo gì / Dev tự quyết gì, cách chạy prototype                                                                                                                                |
-| `WeInvoice_UI_Spec_v1.0/02_Yeu_cau_nghiep_vu.md`    | Phạm vi P1 + quy tắc nghiệp vụ bắt buộc (mục 3.1–3.10 của file đó)                                                                                                                            |
-| `WeInvoice_UI_Spec_v1.0/01_Dac_ta_UI.html`          | 19 màn hình: mục đích, thành phần, thao tác + 38 ảnh. Nặng 3,6 MB vì ảnh base64 → mở bằng trình duyệt; muốn đọc chữ thì lọc bỏ `data:` trước, **đừng Read cả file**                          |
-| `WeInvoice_UI_Spec_v1.0/weinvoice-web/`             | Mã nguồn UI (Next.js 16, React 19, Tailwind 4), logic đã gỡ thành stub `TODO(dev)`. `lib/types.ts` = dữ liệu UI cần, `lib/providers.ts` › `PROVIDERS` = danh mục 144 NCC, `lib/i18n` = nhãn VI/EN/KO. Bản đã sửa (xem trên), khác zip |
-| `WeInvoice_UI_Spec_v1.0/chay_prototype.bat` + 2 zip | Prototype chạy không cần cài (`demo`/`demo1234`, cổng 3001), dữ liệu bên trong là mô phỏng. Bat giải nén vào `WeInvoice_Prototype/` và ghi `data/state.json`                                 |
-| `WeInvoice_Roadmap_WBS_Function_v1.0.xlsx`          | Roadmap P0–P7, WBS/Gantt, Function List 117 chức năng (66 thuộc P1), sheet "NCC theo Phase" (P1 = 27 NCC)                                                                                     |
+| File (`docs/`)                                       | Nội dung                                                                                                                                                                                      |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WeInvoice_UI_Spec_v1.1/00_THAY_DOI_v1.0_v1.1.md`    | **Đọc đầu tiên**: 11 thay đổi giao diện, 3 thay đổi file 02, tệp mã nguồn đổi. Ảnh trước/sau ở `anh_so_sanh/`                                                                               |
+| `WeInvoice_UI_Spec_v1.1/00_DOC_TRUOC.md`             | Đọc trước: phải theo gì / Dev tự quyết gì, cách chạy prototype                                                                                                                                |
+| `WeInvoice_UI_Spec_v1.1/02_Yeu_cau_nghiep_vu.md`     | Phạm vi P1 + quy tắc nghiệp vụ bắt buộc (mục 3.1–3.12 của file đó; 3.11, 3.12 mới)                                                                                                            |
+| `WeInvoice_UI_Spec_v1.1/01_Dac_ta_UI.html`           | 20 màn hình (thêm 05 "Tải PDF hàng loạt", các màn sau dịch số +1), nhãn **[MỚI v1.1]/[ĐỔI v1.1]**. Nặng 4,5 MB vì ảnh base64 → mở bằng trình duyệt; đọc chữ thì lọc bỏ `data:` trước, **đừng Read cả file** |
+| `WeInvoice_UI_Spec_v1.1/weinvoice-web/`              | Mã nguồn UI (Next.js 16, React 19, Tailwind 4), stub `TODO(dev)`, trùng 100% `WeInvoice_UI_Source_v1.1.zip`. `lib/types.ts` = dữ liệu UI cần, `lib/providers.ts` › `PROVIDERS` = danh mục (138 NCC, chưa có 6 NCC mình thêm), `lib/i18n` = nhãn VI/EN/KO. Mới: `components/invoices/PdfDownload.tsx`, `lib/pdfPack.ts`; thêm `pdf-lib`, `qrcode` |
+| `WeInvoice_UI_Spec_v1.1/chay_prototype.bat` + 2 zip  | Prototype v1.1 (`demo`/`demo1234`, cổng 3001), dữ liệu + PDF "gốc" là **mô phỏng**, lỗi NCC giả ~2%. Bat giải nén vào `WeInvoice_Prototype/`. Nên mở ẩn danh (lẫn state demo của v1.0)    |
+| `WeInvoice_UI_Spec_v1.0/`                            | Bản cũ, giữ để đối chiếu; `weinvoice-web/` ở đây là bản đã sửa (xem trên)                                                                                                                     |
+| `WeInvoice_Roadmap_WBS_Function_v1.0.xlsx`           | Roadmap P0–P7, WBS/Gantt, Function List 117 chức năng (66 thuộc P1), sheet "NCC theo Phase" (P1 = 27 NCC). **v1.1 không có Roadmap mới**, vẫn dùng file này                                  |
 
-Git chỉ nhận bản bàn giao + `weinvoice-web/`. `.gitignore` bỏ 2 bản giải nén tay (`WeInvoice_Prototype_v1.0/`,
-`WeInvoice_UI_Source_v1.0/`, trùng 100% zip), thư mục bat sinh ra và mọi file trong `TestData/` (dev hay bỏ XML/PDF
-thật vào để thử prototype; dữ liệu thật không lên repo).
+Git chỉ nhận bản bàn giao + `weinvoice-web/`. `.gitignore` bỏ các bản giải nén tay (v1.0: `WeInvoice_Prototype_v1.0/`,
+`WeInvoice_UI_Source_v1.0/`; v1.1: `web/`, `server.ps1`, `HUONG_DAN.txt` giải nén thẳng vào thư mục), gói ngoài
+`docs/WeInvoice_UI_Spec_v1.1.zip` (trùng 100% thư mục), thư mục bat sinh ra và mọi file trong `TestData/` (dev hay bỏ
+XML/PDF thật vào để thử prototype; dữ liệu thật không lên repo).
 
-**P1: dev 02/11 → demo 23/12/2026**, Webcash + 27 NCC đã xong cả 2 kênh (XML + email). Màn "lộ trình" (kê khai GTGT,
-bảng kê, xuất theo mẫu, phụ lục giảm thuế, nối PDF, gói) chỉ cần trang giới thiệu. Theo Function List, kiểm tra HĐ,
-rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API cho nút "Update" của WeCMS (thay Coocon) là P1 Must.
+**Thay đổi v1.0 → v1.1 (chỉ màn Hoá đơn mua vào / bán ra):**
+- Nút tải rời tiêu đề trang (chỉ còn **Đồng bộ**) xuống **thanh tải trên bảng**: Cột · Gắn tag (n) (khi đã tick) · **Tải PDF (n) ▾**
+  · Excel (n) · **Bảng kê gốc (CQT)** · Tải XML tất cả / đã chọn (n). **Không tick = toàn bộ theo bộ lọc, có tick = đã chọn.**
+  Thanh "Đã chọn n" còn Chọn tất cả theo bộ lọc · Lấy XML còn thiếu · Bỏ chọn.
+- **Excel** (02 §3.11): 3 sheet Tổng hợp / Chi tiết bán ra / Chi tiết mua vào (dòng hàng từ XML), dòng 1 ghi chú miễn trừ, dòng 2
+  tiêu đề, ngày là kiểu ngày, tiền `#,##0`, có bộ lọc; HĐ không dòng hàng → 1 dòng "(không có dòng hàng trong XML)". Thiếu XML →
+  hộp 2 nút **Xuất ngay (thiếu n HĐ)** / **Đồng bộ + xuất đầy đủ** (~1,5 giây/HĐ).
+- **Tải PDF hàng loạt** (02 §3.12, màn 05 mới): 6 kiểu `_NOI-PDF` / (không) / `_BAN-THE-HIEN` / `_PDF-XML` / `_THEO-CONG-TY` /
+  `_THEO-THANG`; ZIP `<MST>_<MUAVAO|BANRA>_<dd-mm-yyyy>-<dd-mm-yyyy><hậu tố>.zip`, PDF `yyyy-mm-dd-<Số>-<ĐỐI TÁC VIẾT LIỀN>.pdf`.
+  HĐ không có PDF gốc vẫn vào gói: bản thể hiện ở `_ban_the_hien_khong_co_pdf_goc\` + `doc_truoc.txt`, XML ở `_thay_bang_xml\yyyy-mm\`.
+  HĐ lỗi tạm thời không vào gói, hiện ở Kết quả để **Thử lại** + **Tải Excel HĐ thất bại**. Tiến độ 2 bước (XML còn thiếu → PDF),
+  huỷ được. Nút **Quét Gmail để lấy mã tra cứu** → màn Kết nối email.
+- **Bảng kê gốc (CQT)**: ZIP `bang-ke-goc-CQT_<từ>_<đến>.zip`, mỗi tháng 1 Excel đúng cột trang GDT; kỳ chưa đủ → hậu tố `__THIEU`.
+- Màn Tải lên: dòng hướng dẫn TestData bỏ nhắc bộ nghiệm thu `ket_qua_mong_doi.xlsx` (TestData giao trống).
+- Không đổi: phạm vi P1, các màn khác, `lib/types.ts`, `lib/providers.ts` (chỉ đổi chú thích `v1.0`→`v1.1`).
+
+**P1: dev 02/11 → demo 23/12/2026** (v1.1 không đổi), Webcash + 27 NCC đã xong cả 2 kênh (XML + email). Màn "lộ trình" (kê
+khai GTGT, bảng kê, xuất theo mẫu, phụ lục giảm thuế, nối PDF `/tools/pdf-merge`, gói) chỉ cần trang giới thiệu — v1.1 vẫn
+ghi vậy, nhưng **"Nối tất cả thành 1 file PDF" trên màn Hoá đơn là chức năng thật P1** (3.12). Theo Function List, kiểm
+tra HĐ, rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API cho nút "Update" của WeCMS (thay Coocon) là P1 Must.
 
 ## 3.2 Ánh xạ spec ↔ DB
 
@@ -893,7 +918,11 @@ rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API ch
 | `lookupCode` / `lookupUrl`                                                        | `invoice_xml.ma_tra_cuu` / `lookup_url`                                                             | BKAV tra bằng `parsed.dlhdon_id`                                                                                              |
 | `sellerAddress` / `buyerAddress`                                                  | `parsed.nguoi_ban/nguoi_mua.dia_chi`, `list_raw.nbdchi/nmdchi`, `partners.address`                  |                                                                                                                               |
 | `items[].vatRate` (0/5/8/10, −1 = KCT)                                            | `invoice_details.thue_suat` TEXT                                                                    | Có thêm `KKKNT`, `KHAC:x%`                                                                                                    |
-| `files[]`, `origin` gdt / vendor / email / upload                                 | `invoice_xml` (XML từ mail: `invoice_details.nguon='xml_email'`), `invoice_pdf.source_id` (`email`, `email:<adapter>`, `<adapter>`) | Không có tệp đính kèm khác, không có nguồn `upload`                                                       |
+| `files[]`, `origin` gdt / vendor / email / upload                                 | `invoice_xml` (XML từ mail: `invoice_details.nguon='xml_email'`, tải lên: `xml_upload`), `invoice_pdf.source_id` (`email`, `email:<adapter>`, `<adapter>`, `upload`) | Tệp đính kèm khác: bảng `winv_*` của backend                                                  |
+| v1.1 bản thể hiện / "bản trống đồng" (`_BAN-THE-HIEN`, `_ban_the_hien_khong_co_pdf_goc`) | `invoice_xml.gdt_pdf_path` (`gdt_pdf.py` in `invoice.html` của ZIP Thuế, nền trống đồng, có QR) | Chỉ HĐ có ZIP export-xml. HĐ không mã chưa có XML (hthdon=2) không có → backend phải tự dựng từ dữ liệu danh sách |
+| v1.1 lý do thiếu PDF gốc `no_code_invoice` / `no_lookup_code` / `not_connected` / `no_provider`; lỗi tạm `gateway` | `tasks` loại `pdf`: `summary_only`/hthdon=2 · `no_code` · `no_portal` · `no_source`; `server`/`timeout` đang hẹn thử lại | `no_portal` gộp cả "chưa làm cổng" lẫn reCAPTCHA (M-Invoice, HT, EFY) — UI chỉ có `not_connected` |
+| v1.1 Excel sheet Chi tiết (dòng hàng, thuế suất, chiết khấu âm)                   | `invoice_details` (`thue_suat` TEXT có `KKKNT`, `KHAC:x%`)                                          | HĐ chưa có XML → dòng "(không có dòng hàng trong XML)"                                                                         |
+| v1.1 Bảng kê gốc (CQT), hậu tố `__THIEU`                                          | File Excel gốc GDT xuất: `output/list/<MST>/<sub_type>_<từ>_<đến>.xlsx` (chỉ trên đĩa máy chạy job, không có trong DB); độ phủ tháng `winv_sync_cvrg.cmpl_yn` | Mỗi tháng nhiều file (theo `sub_type`: có mã / không mã / MTT × mua/bán), MTT khác bố cục cột; máy backend (.13) phải đọc được thư mục này |
 | `GdtConnection`                                                                   | `companies` + `gdt_sessions` + `job_run_companies.status`                                           | Không có nhãn; mật khẩu ở `.env`                                                                                              |
 | `SyncRun`                                                                         | `job_runs` + `job_run_companies.stats` (`new_invoices`, `xml_ok`, `failed_chunks`…)                 | Không có số "cập nhật", không lưu kỳ từ–đến                                                                                   |
 | `EmailMessage`                                                                    | `email_messages` + `email_files`                                                                    | Mail không phải HĐ không lưu tiêu đề / người gửi                                                                              |
@@ -928,8 +957,26 @@ rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API ch
 - 28 XML trong mail vẫn `unmatched` dù HĐ đã có XML từ Thuế: file tạm đã mất nên `rematch` bỏ qua (`OSError` →
   `continue`) thay vì đánh `duplicate`.
 
-## 3.4 Lệch trong file Roadmap
+## 3.4 Lệch trong file Roadmap và spec v1.1 (cần phản hồi PO)
 
+**Spec v1.1 (kiểm 25/11, user quyết cùng ngày):**
+- 4 sửa của mình (144 NCC, tiền tệ ISO, KKKNT `vatRate = -2`, không giới hạn MST) không có trong v1.1: **user: "ok rồi, không
+  cần sửa gì"** — không sửa bộ v1.1, không gửi PO; dev vẫn làm theo 4 sửa đó.
+- Tải PDF hàng loạt: **user chốt "xử lý server rồi tải về 1 pack"** (spec giả định tải trên trình duyệt "3–10 giây/HĐ, không
+  tắt trang", 2.900 HĐ = 2,4–8 giờ). Đã làm 25/11 (3.5).
+- Bảng kê gốc "mỗi tháng 1 file đúng cột GDT": Thuế xuất riêng 6 loại danh sách (`output/list/<MST>/` có
+  `mua` / `mua-khma` / `mua-mtt` / `ban` / `ban-khma` / `ban-mtt`), HĐ thường 19 cột, MTT bán 17 cột (có "Căn cước công dân"),
+  MTT mua 17 cột (có "Địa chỉ người bán", không có tiền tệ / tỷ giá / phí) → không có 1 bảng nào "đúng cột" cho cả tháng.
+  Đã làm: **1 file/tháng, mỗi loại 1 sheet đúng cột Thuế** — nên báo PO để ghi vào spec.
+- Nút "Quét Gmail để lấy mã tra cứu": **user đồng ý đổi thành "Quét email"** (hộp thư có Gmail / Outlook / IMAP) — đã làm.
+- Còn hỏi PO: "Nối PDF" (`/tools/pdf-merge`) vẫn là màn lộ trình trong khi "Nối tất cả thành 1 file PDF" là chức năng thật;
+  bản thể hiện của HĐ không mã chưa có XML chỉ có phần đầu + tổng tiền (không có dòng hàng).
+- Lỗi mã nguồn spec: `docs/WeInvoice_UI_Spec_v1.1/weinvoice-web/lib/api/taxportal.ts` dòng 24 (hàm `portalOf`) kiểu trả về
+  `import("/home/claude/devspec/src11/weinvoice-web/lib/mock/seed")` — đường dẫn tuyệt đối trên máy PO, máy khác không có →
+  `tsc` báo không tìm thấy module (v1.0 cũng vậy, `src/` thay `src11/`). Phải là `import("@/lib/mock/seed")`. Không ảnh hưởng
+  `we-scraping-web` (không chép file này).
+
+**Roadmap:**
 - ~~VNISC 0103018807~~ đã sửa thành 0102331762 (xem "Đã sửa" ở đầu PHẦN 3). 0103018807 tra ở vninvoice.vn, model
   `g_180x50_vn` chưa dùng được (1.5 mục 3).
 - VETC ghi xong 2 kênh, nhưng 8 HĐ của 0106858609 (phí đỗ xe, chỉ xem trong app) đều chưa có PDF; 11 PDF VETC lấy được
@@ -990,3 +1037,10 @@ rủi ro NCC, hạch toán, tờ khai đã nộp thuộc P3–P6; Partner API ch
   `application-local.yml` (gitignore) — có cả trên HEAD gốc, không phải lỗi mới.
 - Endpoint mới phải có `@menuAuthz` hoặc nằm trong allow-list của `EndpointAuthorizationCoverageTest` (WeInvoice đang ở allow-list).
 - pgjdbc không cho `rs.getObject(col, Long.class)` với cột `numeric` → đọc số có thể null bằng `getLong` + `wasNull`.
+- **Tải hoá đơn theo UI Spec v1.1** (25/11, record `docs/features/addon-service/weinvoice/weinvoice-invoice-downloads-v1-1-2026-11-25.md`
+  ở api + web; commit api `6b74af4` (nhánh `sit`), web `2367585` (nhánh `scraping-data`), chưa push): Excel 3 sheet (§3.11), `POST /invoices/export/cqt-list` (Bảng kê gốc, dựng lại từ `invoices.list_raw`,
+  `__THIEU` theo `winv_sync_cvrg`), job tải PDF `/invoices/export/pdf-jobs*` (chạy trong API, giữ 2 giờ trong bộ nhớ, bước 1
+  `FETCH_XML`, bước 2 lấy PDF đã có + hỏi engine `FETCH_PDF` tối đa 20 HĐ/lượt, HĐ không có PDF gốc → bản Thuế `gdt_pdf_path`
+  hoặc bản dựng OpenPDF không QR), ZIP/Excel nhận phạm vi theo bộ lọc (không tick). Web: thanh tải trên bảng, `PdfDownload.tsx`,
+  hộp thiếu XML 2 nút. Test: api 229/229 WeInvoice (cả bộ 3.026, 1 lỗi có sẵn `VatDeclarationLifecycleTest`), web 221/221.
+  **Chưa chạy với DB / engine / trình duyệt thật** — kiểm trên SIT.
