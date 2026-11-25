@@ -317,3 +317,46 @@ def test_has_pending_input_once_per_process(account, monkeypatch):
     assert ad.has_pending_input() is False
     monkeypatch.delenv("MINVOICE_USER_0108515678_001")
     assert minvoice.MinvoiceAdapter().has_pending_input() is False
+
+
+# ---------------------------------------------------------------------------
+# Hộp chờ PDF do scripts/minvoice_batch.py tải (cổng có reCAPTCHA v3) — 25/11/2026
+# ---------------------------------------------------------------------------
+
+def _drop_pdf(tmp_path, monkeypatch, data: bytes, invoice=INV) -> Path:
+    monkeypatch.setenv("INVOICE_OUTPUT_DIR", str(tmp_path))
+    d = minvoice.drop_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    (d / minvoice.local_name(invoice)).write_bytes(data)
+    return d
+
+
+def test_local_name_format():
+    assert minvoice.local_name(INV) == "0104957749-001_1_C26TCA_11001.pdf"
+    assert minvoice.local_name(INV_MTT) == "0110097153_1_C26MBH_2703.pdf"
+
+
+def test_local_drop_pdf_imported_without_portal(tmp_path, monkeypatch):
+    d = _drop_pdf(tmp_path, monkeypatch, _pdf_with("So 11001"))
+
+    def _no_net():
+        raise AssertionError("không được gọi cổng khi đã có PDF trong hộp chờ")
+
+    monkeypatch.setattr(minvoice, "new_session", _no_net)
+    pdf = minvoice.MinvoiceAdapter().fetch_pdf(dict(INV))
+    assert pdf.startswith(b"%PDF")
+    assert not (d / minvoice.local_name(INV)).exists()                  # đã chuyển sang used/
+    assert (d / "used" / minvoice.local_name(INV)).exists()
+
+
+def test_local_drop_pdf_of_other_invoice_rejected(tmp_path, monkeypatch):
+    _drop_pdf(tmp_path, monkeypatch, _pdf_with("So 99999"))
+    with pytest.raises(PdfFetchError) as ei:
+        minvoice.MinvoiceAdapter().fetch_pdf(dict(INV))
+    assert ei.value.kind == "bad_content"
+
+
+def test_local_drop_counts_as_pending_input(tmp_path, monkeypatch):
+    monkeypatch.delenv("MINVOICE_USER_0108515678_001", raising=False)
+    _drop_pdf(tmp_path, monkeypatch, _pdf_with("So 11001"))
+    assert minvoice.MinvoiceAdapter().has_pending_input() is True

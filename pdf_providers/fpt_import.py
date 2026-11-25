@@ -54,21 +54,49 @@ def _read(path: Path) -> dict | None:
         return None
 
 
+def _json_paths():
+    """JSON trong hộp chờ + `used/` (fetch_pdf chuyển sang `used/` trước khi lấy XML)."""
+    d = drop_dir()
+    for folder in (d, d / "used"):
+        if folder.is_dir():
+            yield from sorted(folder.glob("*.json"))
+
+
 class FptAdapter(PdfAdapter):
     source_id = "fpt"
     name = "FPT eInvoice"
     mst_tcgp = ("0104128565",)
     # Không khai `hosts`: link mail FPT giữ `new` (khai mà invoice_from_link trả None thì thành `ignored`).
+    # `lookup_hosts` chỉ để định tuyến HĐ không có XML/MSTTCGP (vd HĐ không mã, Thuế 500) theo link mail.
+    lookup_hosts = ("tracuuhoadon.fpt.com.vn",)
+    # JSON /api/search có sẵn `xml` → lấy XML bổ sung khi HĐ chưa có XML ở Thuế.
+    fetch_xml_with_pdf = True
 
     def has_pending_input(self) -> bool:
         d = drop_dir()
         return d.is_dir() and any(d.glob("*.json"))
 
+    def fetch_xml(self, invoice: dict) -> bytes:
+        """XML gốc kèm trong JSON /api/search (cùng nguồn với PDF). Không xóa/di chuyển JSON."""
+        want = _key(invoice.get("nbmst"), invoice.get("khmshdon"), invoice.get("khhdon"),
+                    invoice.get("shdon"))
+        for path in _json_paths():
+            hit = _read(path)
+            if not hit or hit["key"] != want:
+                continue
+            xml = str(hit["data"].get("xml") or "").strip()
+            if not xml.startswith("<"):
+                raise PdfFetchError(f"JSON FPT {path.name} không có XML hợp lệ", "bad_content")
+            return xml.encode("utf-8")
+        raise PdfFetchError(
+            f"FPT: chưa có JSON /api/search của HĐ {want[1:] if want else '?'} trong {drop_dir()} — "
+            "chạy scripts/fpt_batch.py (hoặc pdf_providers/fpt.py) với MST bán + mã sec", "no_portal")
+
     def fetch_pdf(self, invoice: dict) -> bytes:
         want = _key(invoice.get("nbmst"), invoice.get("khmshdon"), invoice.get("khhdon"),
                     invoice.get("shdon"))
         d = drop_dir()
-        for path in sorted(d.glob("*.json")) if d.is_dir() else ():
+        for path in _json_paths():
             hit = _read(path)
             if not hit or hit["key"] != want:
                 continue
@@ -79,7 +107,8 @@ class FptAdapter(PdfAdapter):
             check_pdf_is_invoice(pdf, invoice)
             used = d / "used"
             used.mkdir(exist_ok=True)
-            path.replace(used / path.name)
+            if path.parent != used:                 # đã ở used/ (lượt trước lưu PDF lỗi) → giữ nguyên
+                path.replace(used / path.name)
             return pdf
         raise PdfFetchError(
             f"FPT: chưa có JSON /api/search của HĐ {want[1:] if want else '?'} trong {d} — chạy script "

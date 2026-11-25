@@ -122,6 +122,18 @@ def adapter_for_host(host: str | None) -> PdfAdapter | None:
     return None
 
 
+def adapter_for_lookup_host(host: str | None) -> PdfAdapter | None:
+    """Adapter định tuyến hóa đơn không có XML/MSTTCGP theo `lookup_hosts` (link mail của người bán).
+
+    Khác `adapter_for_host`: không làm process_links nhận link, nên link vẫn giữ 'new'."""
+    host = (host or "").lower().strip(".")
+    for adapter in _REGISTRY.values():
+        for h in getattr(adapter, "lookup_hosts", ()):
+            if host == h or host.endswith("." + h):
+                return adapter
+    return None
+
+
 def adapter_for_mst_tcgp(mst_tcgp: str | None) -> PdfAdapter | None:
     """Adapter mặc định theo MSTTCGP (dùng khi einvoice_providers chưa gắn source_id).
     MST chi nhánh (0106026495-001) dùng adapter của công ty mẹ."""

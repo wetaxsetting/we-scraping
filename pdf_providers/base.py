@@ -30,6 +30,12 @@ class PdfAdapter:
     name: str = ""
     mst_tcgp: tuple = ()      # MSTTCGP mà adapter tự nhận (không cần set-provider)
     hosts: tuple = ()         # tên miền cổng tra cứu (khớp cả subdomain) — để nhận link trong mail
+    # Tên miền dùng CHỈ để định tuyến hóa đơn không có XML/MSTTCGP (theo link mail của người bán);
+    # KHÔNG dùng cho process_links — khai `hosts` mới là nhận link (và invoice_from_link phải xử lý được).
+    lookup_hosts: tuple = ()
+    # Adapter có fetch_xml: job lấy PDF xong thì lấy luôn XML bổ sung cho HĐ Thuế không có XML
+    # (HĐ không mã / hthdon=2). Mặc định tắt — chỉ bật khi cổng trả XML chắc chắn trong cùng nguồn.
+    fetch_xml_with_pdf: bool = False
 
     def fetch_pdf(self, invoice: dict) -> bytes:
         raise NotImplementedError

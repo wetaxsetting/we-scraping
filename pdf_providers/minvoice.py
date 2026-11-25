@@ -97,6 +97,29 @@ def _blocks_file() -> Path:
     return Path(os.getenv("INVOICE_OUTPUT_DIR") or ROOT / "output") / ".minvoice_login_blocks.json"
 
 
+def drop_dir() -> Path:
+    """Hộp chờ PDF do `scripts/minvoice_batch.py` tải sẵn (cổng có reCAPTCHA v3, job không tự gọi)."""
+    return Path(os.getenv("INVOICE_OUTPUT_DIR") or ROOT / "output") / "manual" / "minvoice"
+
+
+def local_name(invoice: dict) -> str:
+    """Tên file trong hộp chờ — script và adapter dùng chung công thức này."""
+    return (f"{str(invoice.get('nbmst') or '').strip()}_"
+            f"{invoice.get('khmshdon')}_{str(invoice.get('khhdon') or '').strip().upper()}_"
+            f"{invoice.get('shdon')}.pdf")
+
+
+def local_pdf(invoice: dict) -> Path | None:
+    """PDF có sẵn trong hộp chờ (hoặc `used/` — lượt trước lưu DB lỗi)."""
+    d = drop_dir()
+    name = local_name(invoice)
+    for folder in (d, d / "used"):
+        p = folder / name
+        if p.is_file():
+            return p
+    return None
+
+
 def _fingerprint(acct: dict) -> str:
     raw = "\n".join([acct["host"], acct["ma_dvcs"], acct["username"], acct["password"]])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -163,7 +186,13 @@ class MinvoiceAdapter(PdfAdapter):
         self._announced = False
 
     def has_pending_input(self) -> bool:
-        """Có tài khoản trong .env → 1 lần mỗi tiến trình đưa HĐ 'no_portal' của M-invoice về hộp chờ."""
+        """Có PDF trong hộp chờ (scripts/minvoice_batch.py) hoặc có tài khoản .env → đưa HĐ về hộp chờ.
+
+        Tài khoản: 1 lần mỗi tiến trình (đủ để `_prepare_queues` requeue). PDF: còn file là còn nhắc.
+        """
+        d = drop_dir()
+        if d.is_dir() and any(d.glob("*.pdf")):
+            return True
         if self._announced or not configured_sellers():
             return False
         self._announced = True
@@ -191,6 +220,18 @@ class MinvoiceAdapter(PdfAdapter):
         return (invoice.get("ma_tra_cuu") or "").strip()
 
     def fetch_pdf(self, invoice: dict) -> bytes:
+        local = local_pdf(invoice)
+        if local is not None:
+            data = local.read_bytes()
+            if not is_pdf(data):
+                raise PdfFetchError(f"PDF hộp chờ {local.name} không hợp lệ", "bad_content")
+            check_pdf_is_invoice(data, invoice)
+            d = drop_dir()
+            if local.parent == d:               # giữ bản trong used/ để lượt lại vẫn dùng được
+                used = d / "used"
+                used.mkdir(exist_ok=True)
+                local.replace(used / local.name)
+            return data
         mst = (invoice.get("nbmst") or "").strip()
         acct = account_for(mst) if mst else None
         if acct:

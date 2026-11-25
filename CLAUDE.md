@@ -663,6 +663,17 @@ Quy tắc khi viết adapter:
   `<INVOICE_OUTPUT_DIR>/manual/fpt/*.json`; lượt `pdf`/`tick` kế tiếp: `_prepare_queues` thấy JSON chưa dùng →
   đưa HĐ FPT `no_portal` về hộp chờ → adapter khớp (MST bán, mẫu, ký hiệu, số), kiểm số HĐ, ghi `invoice_pdf`,
   chuyển JSON sang `used/`. Chưa có JSON của HĐ → `no_portal` (nằm chờ, không tốn lượt). Job không tự mở cổng FPT.
+  **25/11: `scripts/fpt_batch.py` chạy cả mẻ** — đọc `email_links` host FPT có `?mst=&sec=` (status `new`), mở
+  Chromium **một lần** (profile `fpt_profile`) cho lần lượt từng link, bắt `/api/search`, ghi thẳng
+  `output/manual/fpt/<mst>_<sec>.json` (link trùng `sec` gộp; JSON sai → `_invalid/`); `--dry-run` liệt kê,
+  `--import` gọi luôn `invoice_job.py pdf`, `--statuses new,mail_file` để lấy bản gốc thay PDF trong mail.
+  `fpt.py` giữ để chạy tay 1 link. Không nối thẳng từ XML được: 0/1.732 XML FPT có mã/link, `sec` chỉ có trong mail.
+  **Định tuyến + XML bổ sung (25/11):** HĐ không có XML lẫn MSTTCGP (không mã, Thuế trả 500) trước đây ra
+  `no_source` dù JSON đã có — nay `pick_adapter` lùi về `store.seller_link_hosts` (host link mail chứa
+  `mst=<MST bán>`) + `pdf_providers.adapter_for_lookup_host` (adapter khai `lookup_hosts`, **không** khai `hosts`
+  nên link vẫn `new`). Lấy PDF xong, nếu HĐ chưa có XML và adapter có `fetch_xml_with_pdf` (FPT: JSON có `xml`,
+  có chữ ký số) thì `_save_portal_xml` lưu XML + dòng hàng (`nguon='xml_email'`, task XML → done). Thật: K26TAA
+  8801 (người bán 0107622966) trước chỉ có PDF, nay có thêm XML 4.765 bytes.
   **HT, EFY: đang nghiên cứu.** `pdf_providers/manual_portals.py` khai báo 2 NCC này (source_id `ht`/`efy`, MSTTCGP,
   cổng, tình trạng); `fetch_pdf` ném `no_portal` cho tới khi có adapter.
   `fpt`/`ht`/`efy` **cố ý không khai `hosts`** để link mail giữ `new` chứ không thành `ignored` vĩnh viễn. Adapter `fpt`
@@ -694,6 +705,16 @@ Quy tắc khi viết adapter:
   (2) người bán tự xuất PDF hàng loạt từ M-Invoice rồi tải lên WeInvoice; (3) giữ PDF Thuế. M-Invoice gỡ reCAPTCHA thì
   adapter tự lấy lại: `requeue --status dead --type pdf --mst-tcgp 0106026495-001` (khớp MSTTCGP chính xác, chạy cả với
   `0106026495`).
+  **25/11: `scripts/minvoice_batch.py` — giống FPT nhưng KHÔNG cần mail.** Đọc JS của cổng: `GET /api/Search/GetRecaptchaSiteKey`
+  → siteKey; `grecaptcha.execute(siteKey, {action:"search_invoice"})` → token (sống ~2 phút, dùng 1 lần); rồi
+  `GET /api/Search/SearchInvoiceCaptcha?masothue=&sobaomat=&type=PDF&inchuyendoi=false` + header `X-Recaptcha-Token`
+  → `application/pdf` (thiếu token: 400 "Thiếu token Google reCAPTCHA."). Vì `nbmst` + `ma_tra_cuu` đã có trong XML nên
+  script chạy hoàn toàn từ DB: 1 Chromium **có giao diện** (profile `minvoice_profile`, mỗi HĐ 1 token mới), lưu PDF vào
+  `output/manual/minvoice/<MST>_<mẫu>_<ký hiệu>_<số>.pdf`, rồi đưa task `dead/no_source` về hàng đợi. Adapter `minvoice`
+  nay đọc PDF hộp chờ **trước** (kiểm số HĐ, chuyển `used/`), không gọi cổng. Thật 25/11: C26TKC 3181 (0108515678-001) →
+  PDF 160 KB, `source_id='minvoice'`, task `done`. Quy mô: 4.495 HĐ M-Invoice, 137 có PDF, ~4.302 HĐ còn lại có mã; chạy
+  theo lô `--limit` (mặc định nghỉ 3 s ±30%/HĐ, dừng sau 8 lỗi liên tiếp) — 4.000 HĐ ≈ 4–7 giờ, nên cân nhắc tài khoản
+  người bán (không captcha) nếu phải chạy thường xuyên.
 
 **Nguyên tắc:** chỉ viết adapter cho NCC có hóa đơn thật để thử (XML từ Thuế hoặc mã trong mail). Muốn thêm NCC
 → lấy thêm HĐ cũ (`main_auto.py --from ... --to ...`), xem `status` NCC nào nhiều HĐ nhất.
@@ -863,6 +884,8 @@ không mang các sửa này** (kiểm 25/11): file 02 v1.1 vẫn ghi 138 NCC, b�
 - Thuế suất **KKKNT**: `vatRate = -2` (KCT vẫn `-1`), hàm `vatRateLabel` trong `lib/types.ts` dùng chung cho
   `InvoiceSheet`, `lib/xml.ts`, `lib/api/checks.ts`; nhãn `risk.rate_note` VI/EN/KO; `02` mục 3.3 và 3.7.
   Chưa chạy `tsc` (máy không có `node_modules`).
+- Số MST mỗi tài khoản (16/11, `02` §3.1 "prototype: tối đa 5 — cần chốt"): **mặc định không giới hạn**.
+  `WECMS_WEINVOICE_MAX_COMPANIES` trống / ≤ 0 = không giới hạn, số dương = giới hạn (`quota.max` null = không giới hạn).
 - File Roadmap: VNISC **0103018807 → 0102331762** ở cả 7 ô (sheet NCC theo Phase, Roadmap-WBS-Function, P0-Nghien cuu).
   0102331762 (invoice.abcsys.vn) mới là NCC đã xong 2 kênh.
 

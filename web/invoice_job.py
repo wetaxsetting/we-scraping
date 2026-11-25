@@ -552,11 +552,49 @@ def pick_adapter(store, task: dict):
         return None
     cache = store.__dict__.setdefault("_seller_tcgp", {})       # 1 truy vấn / người bán / tiến trình
     if nbmst not in cache:
-        found = store.seller_mst_tcgp(nbmst)
-        if found is None:
-            return None                     # chưa biết thì không nhớ: HĐ thường của họ có thể về sau
-        cache[nbmst] = found
-    return pdf_providers.adapter_for_mst_tcgp(cache[nbmst])
+        cache[nbmst] = store.seller_mst_tcgp(nbmst) or ""
+    if cache[nbmst]:
+        return pdf_providers.adapter_for_mst_tcgp(cache[nbmst])
+    # Người bán chưa có HĐ nào có XML → không suy được MSTTCGP. Còn link tra cứu trong mail của
+    # chính người bán thì định tuyến theo cổng đó (vd HĐ không mã, Thuế trả 500, mail có link FPT).
+    hosts = store.__dict__.setdefault("_seller_hosts", {})
+    if nbmst not in hosts:
+        hosts[nbmst] = store.seller_link_hosts(nbmst)
+    for host in hosts[nbmst]:
+        adapter = pdf_providers.adapter_for_lookup_host(host)
+        if adapter is not None:
+            return adapter
+    return None
+
+
+def _save_portal_xml(store, task, adapter, run_id, out_dir) -> bool:
+    """
+    HĐ Thuế không có XML (không mã / hthdon=2) mà cổng trả XML cùng nguồn với PDF (vd FPT:
+    JSON /api/search có `xml`) → lưu như XML từ mail (nguon='xml_email'), task XML → done.
+
+    XML là phần thêm: lỗi thì chỉ ghi log, KHÔNG làm hỏng PDF vừa lấy được.
+    """
+    try:
+        xml = adapter.fetch_xml(dict(task))
+        if not xml or not xml.lstrip().startswith(b"<"):
+            return False
+        parsed = xml_parser.parse_xml_bytes(xml)
+        path = invoice_path(out_dir, "xml", task, task["company_mst"], "xml")
+        atomic_write(path, xml)
+        rel = path.relative_to(out_dir).as_posix()
+    except Exception as e:  # noqa: BLE001  XML là phần thêm: lỗi không làm hỏng PDF vừa lấy
+        log.info("[%s] Không lấy được XML bổ sung từ %s: %s", _label(task), adapter.source_id, e)
+        return False
+    try:
+        saved = store.apply_email_xml(task["id"], run_id, rel, hashlib.sha256(xml).hexdigest(),
+                                      parsed, parsed.get("nguoi_ban"))
+    except Exception as e:  # noqa: BLE001  PDF đã lưu xong; đừng làm task PDF thành lỗi
+        log.warning("[%s] Lưu XML bổ sung lỗi (PDF vẫn giữ): %s", _label(task), e)
+        return False
+    if saved:
+        log.info("[%s] XML bổ sung từ %s → %s (HĐ %s %s-%s, nguon=xml_email)",
+                 _label(task), adapter.source_id, rel, task["nbmst"], task["khhdon"], task["shdon"])
+    return saved
 
 
 def pdf_batch(store, mst, run_id, batch, stats, out_dir, breakers, deferred,
@@ -590,6 +628,8 @@ def pdf_batch(store, mst, run_id, batch, stats, out_dir, breakers, deferred,
             atomic_write(path, pdf)
             store.complete_pdf(task, run_id, path.relative_to(out_dir).as_posix(),
                                hashlib.sha256(pdf).hexdigest(), adapter.source_id)
+            if not task.get("xml_path") and getattr(adapter, "fetch_xml_with_pdf", False):
+                _save_portal_xml(store, task, adapter, run_id, out_dir)
             br.record(True)
             stats["pdf_ok"] += 1
             log.info("[%s] PDF OK %s | bán %s | %s → %s", mst, _label(task), task["nbmst"],

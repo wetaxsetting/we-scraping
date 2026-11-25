@@ -113,3 +113,10 @@ docs/WeInvoice_UI_Spec_v1.1/**/*.tsbuildinfo
 docs/WeInvoice_UI_Spec_v1.1/TestData/**
 !docs/WeInvoice_UI_Spec_v1.1/TestData/**/
 !docs/WeInvoice_UI_Spec_v1.1/TestData/**/.gitkeep
+
+# Script trình duyệt (pdf_providers/fpt.py, scripts/fpt_batch.py, scripts/minvoice_batch.py):
+# profile Chromium chứa cookie/reCAPTCHA + file tải/debug — không lên repo
+fpt_profile/
+minvoice_profile/
+/debug/
+/downloads/

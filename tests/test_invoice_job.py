@@ -648,6 +648,9 @@ class _SellerStore:
         self.asked.append(nbmst)
         return self.known.get(nbmst)
 
+    def seller_link_hosts(self, nbmst):
+        return []                      # không có link mail → không định tuyến được
+
 
 def test_mtt_invoice_without_mst_tcgp_is_routed_by_link_then_by_seller():
     """HĐ máy tính tiền: XML không có MSTTCGP (vd 294 HĐ MTT Grab nằm chờ 'no_source', 23/10)."""

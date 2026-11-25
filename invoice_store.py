@@ -787,6 +787,28 @@ class InvoiceStore:
                     return row["mst_tcgp"]
         return None
 
+    def seller_link_hosts(self, nbmst: str, limit: int = 5) -> list[str]:
+        """
+        Cổng tra cứu trong link mail của 1 người bán (nhiều link nhất trước).
+
+        Dùng khi HĐ không có XML lẫn MSTTCGP (vd HĐ không mã, Thuế trả 500) nên không suy được NCC:
+        link mail `?mst=<MST bán>&sec=…` chính là nguồn duy nhất biết người bán dùng cổng nào.
+        """
+        nbmst = (nbmst or "").strip()
+        if not nbmst:
+            return []
+        with self._tx() as cur:
+            cur.execute("""
+                SELECT l.host, count(*) AS n
+                  FROM email_links l
+                 WHERE l.url ILIKE %s
+                    OR l.invoice_id IN (SELECT id FROM invoices WHERE nbmst = %s)
+                 GROUP BY l.host
+                 ORDER BY n DESC, l.host
+                 LIMIT %s
+            """, (f"%mst={nbmst}%", nbmst, limit))
+            return [r["host"] for r in cur.fetchall()]
+
     def no_source_without_tcgp(self) -> list:
         """Task PDF đang 'no_source' vì XML không có MSTTCGP (HĐ máy tính tiền) — để định tuyến lại."""
         with self._tx() as cur:
