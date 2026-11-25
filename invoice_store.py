@@ -432,6 +432,32 @@ class InvoiceStore:
             cur.execute(sql, params)
             return cur.fetchall()
 
+    def temp_zip_candidates(self, company_mst: str | None = None,
+                            include_without_gdt: bool = False) -> list[dict]:
+        """
+        HĐ có ZIP trong temp/ mà `clean-temp` được phép xóa.
+
+        Mặc định: chỉ HĐ đã dựng xong PDF Thuế (`gdt_pdf_path`). `include_without_gdt`: thêm HĐ
+        chưa có PDF Thuế nhưng **đã có PDF gốc** (NCC/mail/upload) — xóa được, đổi lại không dựng
+        lại được "bản Thuế" từ ZIP nữa.
+        """
+        sql = """
+            SELECT i.id, i.company_mst, i.nbmst, i.khmshdon, i.khhdon, i.shdon, i.ngay_lap,
+                   x.gdt_pdf_path IS NOT NULL AS has_gdt_pdf
+              FROM invoice_xml x JOIN invoices i ON i.id = x.invoice_id
+              LEFT JOIN invoice_pdf p ON p.invoice_id = i.id
+             WHERE x.xml_path IS NOT NULL
+               AND (x.gdt_pdf_path IS NOT NULL OR (%s AND p.invoice_id IS NOT NULL))
+        """
+        params: list = [include_without_gdt]
+        if company_mst:
+            sql += " AND i.company_mst = %s"
+            params.append(company_mst)
+        sql += " ORDER BY i.ngay_lap DESC NULLS LAST, i.id DESC"
+        with self._tx() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
     @classmethod
     def _save_xml(cls, cur, invoice_id: int, xml_path: str, sha256: str, parsed: dict,
                   partner: dict | None, nguon: str) -> None:

@@ -209,6 +209,14 @@ def _zip_with(name: str, data: bytes) -> bytes:
     return buf.getvalue()
 
 
+def _zip_two(name1: str, data1: bytes, name2: str, data2: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(name1, data1)
+        z.writestr(name2, data2)
+    return buf.getvalue()
+
+
 @pytest.mark.parametrize("resp, kind", [
     (_Resp(401), "auth"),
     (_Resp(403), "auth"),
@@ -309,9 +317,13 @@ def test_invoice_path_layout(tmp_path):
 class _FakeStore:
     def __init__(self):
         self.completed = []
+        self.gdt_pdf = None
 
     def complete_xml(self, task, run_id, xml_path, sha, parsed, partner):
         self.completed.append(xml_path)
+
+    def set_gdt_pdf(self, invoice_id, path):
+        self.gdt_pdf = path
 
 
 class _FakeTokens:
@@ -850,3 +862,104 @@ def test_requeue_pending_inputs_only_when_drop_has_files(tmp_path, monkeypatch):
     invoice_job._requeue_pending_inputs(st)
     assert ("no_source", {"task_type": "pdf", "mst_tcgp": "0104128565",
                           "error_kind": "no_portal"}) in st.calls
+
+
+def test_pdf_batch_cleans_raw_file_after_commit(tmp_path, monkeypatch):
+    """Sau khi complete_pdf, pdf_batch gọi adapter.cleanup để xóa file thô trong output/manual."""
+    import pdf_providers
+
+    cleaned = []
+
+    class _Ad(pdf_providers.PdfAdapter):
+        source_id, mst_tcgp = "fake_clean", ("0109999998",)
+
+        def fetch_pdf(self, invoice):
+            return b"%PDF-1.4\n" + b"x" * 2000
+
+        def cleanup(self, invoice):
+            cleaned.append(invoice["shdon"])
+
+    monkeypatch.setitem(pdf_providers._REGISTRY, "fake_clean", _Ad())
+    task = dict(_TASK, attempts=0, source_id=None, id=1, task_id=1, shdon=1, mst_tcgp="0109999998")
+    store, stats = _QueueStore([task]), invoice_job.Counter()
+    invoice_job.process_pdf(store, _COMPANY, 1, 5, stats, tmp_path)
+    assert stats["pdf_ok"] == 1 and cleaned == [1]
+
+
+def test_xml_task_deletes_zip_after_gdt_pdf_built(tmp_path, monkeypatch):
+    """ZIP chỉ còn dùng để dựng PDF Thuế → dựng xong thì xóa, XML vẫn giữ."""
+    zip_bytes = _zip_two("hd.xml", SAMPLE_XML.encode(), "invoice.html", b"<html>x</html>")
+    monkeypatch.setattr(invoice_job.api_client, "download_invoice_zip", lambda tok, row: zip_bytes)
+    monkeypatch.setattr(invoice_job.gdt_pdf, "enabled", lambda: True)
+    monkeypatch.setattr(invoice_job.gdt_pdf, "render", lambda zb: b"%PDF-1.4\n" + b"x" * 2000)
+    monkeypatch.delenv("INVOICE_SAVE_ZIP", raising=False)
+    monkeypatch.delenv("INVOICE_KEEP_ZIP", raising=False)
+    store = _FakeStore()
+    invoice_job._do_xml_task(store, _COMPANY, _FakeTokens(), dict(_TASK, id=1), None, tmp_path)
+
+    rel = "1201496252/2026/11/0100112233/1_C26TAA_123"
+    assert not (tmp_path / "temp" / f"{rel}.zip").exists()          # đã xóa sau khi dựng PDF Thuế
+    assert (tmp_path / "pdf_gdt" / f"{rel}.pdf").exists()
+    assert (tmp_path / "xml" / f"{rel}.xml").exists()
+    assert store.gdt_pdf == f"pdf_gdt/{rel}.pdf"
+
+
+def test_xml_task_keeps_zip_when_gdt_pdf_fails(tmp_path, monkeypatch):
+    """Chưa dựng được PDF Thuế → giữ ZIP để `gdt-pdf` dựng bù."""
+    zip_bytes = _zip_two("hd.xml", SAMPLE_XML.encode(), "invoice.html", b"<html>x</html>")
+    monkeypatch.setattr(invoice_job.api_client, "download_invoice_zip", lambda tok, row: zip_bytes)
+    monkeypatch.setattr(invoice_job.gdt_pdf, "enabled", lambda: True)
+
+    def _boom(zb):
+        raise invoice_job.gdt_pdf.GdtPdfError("hỏng")
+
+    monkeypatch.setattr(invoice_job.gdt_pdf, "render", _boom)
+    monkeypatch.delenv("INVOICE_KEEP_ZIP", raising=False)
+    invoice_job._do_xml_task(_FakeStore(), _COMPANY, _FakeTokens(), dict(_TASK, id=1), None, tmp_path)
+    assert len(list((tmp_path / "temp").rglob("*.zip"))) == 1
+
+
+def test_xml_task_keep_zip_env_opts_out(tmp_path, monkeypatch):
+    zip_bytes = _zip_two("hd.xml", SAMPLE_XML.encode(), "invoice.html", b"<html>x</html>")
+    monkeypatch.setattr(invoice_job.api_client, "download_invoice_zip", lambda tok, row: zip_bytes)
+    monkeypatch.setattr(invoice_job.gdt_pdf, "enabled", lambda: True)
+    monkeypatch.setattr(invoice_job.gdt_pdf, "render", lambda zb: b"%PDF-1.4\n" + b"x" * 2000)
+    monkeypatch.setenv("INVOICE_KEEP_ZIP", "1")
+    invoice_job._do_xml_task(_FakeStore(), _COMPANY, _FakeTokens(), dict(_TASK, id=1), None, tmp_path)
+    assert len(list((tmp_path / "temp").rglob("*.zip"))) == 1
+
+
+def test_clean_temp_dry_run_then_apply(tmp_path, monkeypatch):
+    monkeypatch.setattr(invoice_job, "output_dir", lambda: tmp_path)
+    rel = "1201496252/2026/11/0100112233/1_C26TAA_123"
+    p = tmp_path / "temp" / f"{rel}.zip"
+    p.parent.mkdir(parents=True)
+    p.write_bytes(b"x" * 1000)
+
+    class _S:
+        seen = []
+
+        def temp_zip_candidates(self, company, include_without_gdt=False):
+            _S.seen.append(include_without_gdt)
+            return [dict(_TASK, id=1, company_mst="1201496252", has_gdt_pdf=True)]
+
+    args = invoice_job.argparse.Namespace(company=None, apply=False, all=False)
+    assert invoice_job.cmd_clean_temp(_S(), args) == 0 and p.exists()      # chạy thử: không xóa
+    args.apply = True
+    assert invoice_job.cmd_clean_temp(_S(), args) == 0 and not p.exists()
+    assert _S.seen[-1] is False                                            # mặc định chỉ ZIP đã có PDF Thuế
+
+
+def test_clean_temp_all_includes_zip_without_gdt_pdf(tmp_path, monkeypatch):
+    monkeypatch.setattr(invoice_job, "output_dir", lambda: tmp_path)
+
+    class _S:
+        seen = []
+
+        def temp_zip_candidates(self, company, include_without_gdt=False):
+            _S.seen.append(include_without_gdt)
+            return []
+
+    args = invoice_job.argparse.Namespace(company=None, apply=False, all=True)
+    assert invoice_job.cmd_clean_temp(_S(), args) == 0
+    assert _S.seen == [True]

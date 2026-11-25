@@ -309,6 +309,7 @@ python -X utf8 web/invoice_job.py worker --type xml|pdf [--per-company 20] [--ba
 python -X utf8 web/invoice_job.py status        # hộp chờ, lỗi, NCC chưa có adapter, HĐ hthdon=2, mail
 python -X utf8 web/invoice_job.py requeue --status dead|no_source [--type xml|pdf] [--mst-tcgp X]
 python -X utf8 web/invoice_job.py set-provider --mst-tcgp X --source-id Y
+python -X utf8 web/invoice_job.py clean-temp [--company MST] [--apply]  # xóa ZIP cũ trong temp/ của HĐ đã có PDF Thuế (mặc định chỉ thống kê)
 # API nội bộ cho WeInvoice backend (06/11): đăng nhập thử GDT khi user thêm MST — chạy thường trực cạnh job
 python -X utf8 web/internal_api.py    # POST /internal/gdt/login-test, X-Api-Key = SCRAPING_INTERNAL_API_KEY, mặc định 127.0.0.1:8090
 # Worker yêu cầu WeInvoice (09/11): SYNC / FETCH_XML / FETCH_PDF / IMPORT / TEST_DATA từ weinvoice.winv_engn_rqst — chạy thường trực
@@ -418,6 +419,11 @@ Code tách 2 hàm chính: `run_xml_step` (bước 2–4: GDT → XML, lệnh `xm
    đã khai (cổng tự chèn ở khung xem) → `gdt_pdf._add_background` chèn lại, lặp trên mọi trang in. Dấu tích chữ ký chỉ có khi XML có
    chữ ký người bán (HĐ MTT không ký thì GDT cũng không vẽ, đo 8/400 ZIP) — không tự vẽ thêm.
    Tắt: `INVOICE_GDT_PDF=0`.
+   **ZIP tự xóa (25/11):** ZIP là file nặng nhất trong `output/` (chứa cả `invoice.html` + ảnh) và chỉ còn dùng
+   để dựng PDF Thuế, nên `_do_xml_task` **xóa `temp/…zip` ngay sau khi dựng xong PDF Thuế** (`INVOICE_KEEP_ZIP=1`
+   để giữ). Dựng PDF Thuế thất bại → **giữ ZIP** để `gdt-pdf` dựng bù; tắt `INVOICE_GDT_PDF` thì ZIP cũng bị xóa
+   (không còn consumer). ZIP cũ (trước 25/11): `invoice_job.py clean-temp [--apply]` — chỉ xóa ZIP của HĐ đã có
+   `invoice_xml.gdt_pdf_path`, mặc định chạy thử.
 5. **Mail** (nếu cấu hình), xem mục 2.7: XML cho HĐ Thuế không có XML, PDF đính kèm.
    Chạy trước bước PDF để PDF đã có trong mail thì không phải gọi site NCC.
 6. **PDF:** chọn adapter theo `source_id` gắn tay (set-provider), nếu không có thì theo MSTTCGP
@@ -446,6 +452,10 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
   nhận việc ngay. Danh sách không đổi thì không requeue lại — file không khớp HĐ nào (nằm lại mãi) không
   gây requeue toàn bộ task mỗi phút. `scripts/fpt_batch.py` và `scripts/minvoice_batch.py` còn tự
   `requeue_tasks` đúng HĐ vừa lấy, nên không phụ thuộc bước này.
+- **Dọn file thô hộp chờ (25/11):** ghi PDF + `invoice_pdf` xong, `pdf_batch` gọi `adapter.cleanup()`
+  → adapter xóa file trong `output/manual/<ncc>/` (và `used/`): FPT xóa JSON, M-Invoice xóa PDF. Nhờ vậy
+  `output/manual/` chỉ còn file **chưa nhập** (không phình theo số HĐ). `fpt_batch` còn tự xóa JSON khi HĐ
+  đã có PDF từ trước và đánh `done` link mail đã khớp; file không khớp HĐ nào được giữ lại (link vẫn `new`).
 - `worker --type xml|pdf` (chạy mãi): `claim_round_robin` nhận mỗi công ty tối đa `--per-company`
   HĐ mỗi mẻ (cũ trước) → công ty 10.000 HĐ không chặn công ty 30 HĐ. **Không** giữ khóa toàn cục:
   nhiều worker chạy song song, `SKIP LOCKED` lo chia việc. Kiểm trên PostgreSQL thật (bảng tạm):

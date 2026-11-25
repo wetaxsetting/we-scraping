@@ -344,13 +344,29 @@ def sync_lists(store, company, tokens, sub_types, windows_for, breaker, stats,
 # Bước 2: hàng đợi XML
 # ---------------------------------------------------------------------------
 
+def keep_zip() -> bool:
+    """INVOICE_KEEP_ZIP=1: giữ ZIP gốc trong temp/ (mặc định xóa sau khi đã dựng PDF Thuế)."""
+    return os.getenv("INVOICE_KEEP_ZIP", "0").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _zip_no_longer_needed(gdt_pdf_ok: bool) -> bool:
+    """ZIP chỉ còn dùng để dựng PDF Thuế (`gdt-pdf`) — dựng xong thì xóa được."""
+    if keep_zip():
+        return False
+    if gdt_pdf.enabled():
+        return gdt_pdf_ok          # chưa dựng được → giữ để `gdt-pdf` dựng bù sau
+    return True                    # không dùng ZIP nữa
+
+
 def _do_xml_task(store, company, tokens, task, run_id, out_dir) -> None:
     api_row = {"nbmst": task["nbmst"], "khhdon": task["khhdon"], "shdon": task["shdon"],
                "khmshdon": task["khmshdon"], "_sub_type": task["sub_type"]}
     zip_bytes = call_gdt(tokens, lambda tok: api_client.download_invoice_zip(tok, api_row))
+    zip_path = None
     if save_zip_enabled():
         # Lưu ZIP gốc TRƯỚC khi giải nén/parse: XML lỗi vẫn còn bản gốc để đối chiếu.
-        atomic_write(invoice_path(out_dir, "temp", task, company["company_mst"], "zip"), zip_bytes)
+        zip_path = invoice_path(out_dir, "temp", task, company["company_mst"], "zip")
+        atomic_write(zip_path, zip_bytes)
     try:
         xml_bytes = xml_parser.extract_xml(zip_bytes)
     except ValueError as e:
@@ -370,8 +386,15 @@ def _do_xml_task(store, company, tokens, task, run_id, out_dir) -> None:
     store.complete_xml(task, run_id, path.relative_to(out_dir).as_posix(),
                        hashlib.sha256(xml_bytes).hexdigest(), parsed, partner)
     _log_xml(company["company_mst"], task, parsed, path.relative_to(out_dir).as_posix())
+    gdt_pdf_ok = False
     if gdt_pdf.enabled():
-        save_gdt_pdf(store, task, company["company_mst"], zip_bytes, out_dir)
+        gdt_pdf_ok = save_gdt_pdf(store, task, company["company_mst"], zip_bytes, out_dir) is not None
+    # ZIP nặng nhất trong output/ (chứa cả HTML + ảnh): dựng xong PDF Thuế thì xóa
+    if zip_path is not None and _zip_no_longer_needed(gdt_pdf_ok):
+        try:
+            zip_path.unlink()
+        except OSError as e:                    # file đang bị giữ → để lượt sau / clean-temp dọn
+            log.info("[%s] Không xóa được ZIP %s: %s", company["company_mst"], zip_path, e)
 
 
 def save_gdt_pdf(store, task: dict, company_mst: str, zip_bytes: bytes, out_dir: Path) -> str | None:
@@ -630,6 +653,14 @@ def pdf_batch(store, mst, run_id, batch, stats, out_dir, breakers, deferred,
                                hashlib.sha256(pdf).hexdigest(), adapter.source_id)
             if not task.get("xml_path") and getattr(adapter, "fetch_xml_with_pdf", False):
                 _save_portal_xml(store, task, adapter, run_id, out_dir)
+            # Đã ghi DB xong → adapter dọn file thô trong output/manual (FPT JSON, M-Invoice PDF)
+            cleanup = getattr(adapter, "cleanup", None)
+            if cleanup:
+                try:
+                    cleanup(dict(task))
+                except Exception as e:  # noqa: BLE001  dọn file là phụ, không làm hỏng task
+                    log.info("[%s] Không xóa được file thô của %s: %s",
+                             _label(task), adapter.source_id, e)
             br.record(True)
             stats["pdf_ok"] += 1
             log.info("[%s] PDF OK %s | bán %s | %s → %s", mst, _label(task), task["nbmst"],
@@ -1291,6 +1322,48 @@ def cmd_unblock_login(store, args) -> int:
     return 0
 
 
+def cmd_clean_temp(store, args) -> int:
+    """Xóa ZIP gốc trong <out>/temp/ (mặc định: chỉ HĐ đã có PDF Thuế; --all: cả HĐ đã có PDF gốc)."""
+    out_dir = output_dir()
+    include_without_gdt = getattr(args, "all", False)
+    rows = store.temp_zip_candidates(getattr(args, "company", None),
+                                     include_without_gdt=include_without_gdt)
+    found: list[tuple[Path, int, bool]] = []
+    total = with_gdt = 0
+    for row in rows:
+        p = invoice_path(out_dir, "temp", row, row["company_mst"], "zip")
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue
+        has_gdt = bool(row.get("has_gdt_pdf"))
+        found.append((p, size, has_gdt))
+        total += size
+        with_gdt += has_gdt
+    print(f"ZIP có thể xóa trong temp/: {len(found)} file, {total / 1024 / 1024:.1f} MB "
+          f"(đã có PDF Thuế: {with_gdt}; chưa có PDF Thuế nhưng đã có PDF gốc: {len(found) - with_gdt})")
+    for p, size, _ in found[:5]:
+        print(f"  {p.relative_to(out_dir).as_posix()}  {size / 1024:.0f} KB")
+    if not found:
+        return 0
+    if not args.apply:
+        print("Chạy lại với --apply để xóa." + ("" if include_without_gdt else
+              " (Thêm --all để xóa cả ZIP chưa dựng PDF Thuế — khi đó không dựng lại được bản Thuế.)"))
+        return 0
+    removed = freed = 0
+    for p, size, _ in found:
+        try:
+            p.unlink()
+            removed += 1
+            freed += size
+        except OSError as e:                       # file đang bị giữ
+            log.warning("Không xóa được %s: %s", p, e)
+    print(f"Đã xóa {removed}/{len(found)} ZIP, giải phóng {freed / 1024 / 1024:.1f} MB")
+    if include_without_gdt:
+        print("Lưu ý: ZIP của HĐ chưa có PDF Thuế đã xóa → `gdt-pdf` không dựng lại được cho các HĐ đó.")
+    return 0
+
+
 def cmd_gdt_pdf(store, args) -> int:
     """Dựng bù PDF của Thuế từ ZIP đã lưu ở <out>/temp/ (không gọi GDT)."""
     out_dir = output_dir()
@@ -1420,6 +1493,12 @@ def main(argv=None) -> int:
     p.add_argument("--all", action="store_true", help="cả HĐ đã có PDF gốc NCC")
     p.add_argument("--redo", action="store_true", help="dựng lại cả bản đã có (sau khi đổi cách dựng)")
 
+    p = sub.add_parser("clean-temp", help="xóa ZIP gốc trong temp/ của HĐ đã dựng xong PDF Thuế")
+    p.add_argument("--company", help="chỉ 1 MST")
+    p.add_argument("--apply", action="store_true", help="xóa thật (mặc định chỉ thống kê)")
+    p.add_argument("--all", action="store_true",
+                   help="xóa cả ZIP của HĐ chưa có PDF Thuế nhưng đã có PDF gốc (mất khả năng dựng bản Thuế)")
+
     p = sub.add_parser("set-provider", help="gắn adapter PDF cho 1 đơn vị cung cấp HĐĐT")
     p.add_argument("--mst-tcgp", required=True)
     p.add_argument("--source-id", required=True)
@@ -1440,6 +1519,7 @@ def main(argv=None) -> int:
             "xml": cmd_xml, "pdf": cmd_pdf, "mail": cmd_mail, "sweep": cmd_sweep, "status": cmd_status, "requeue": cmd_requeue,
             "set-provider": cmd_set_provider, "sync-lists": cmd_sync_lists, "worker": cmd_worker,
             "login-blocks": cmd_login_blocks, "unblock-login": cmd_unblock_login, "gdt-pdf": cmd_gdt_pdf,
+            "clean-temp": cmd_clean_temp,
         }[args.cmd](store, args)
     finally:
         store.close()
