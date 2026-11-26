@@ -470,6 +470,12 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
   chạy bình thường. Công ty `active=false` chỉ dừng **worker XML**; worker PDF vẫn tải (cổng NCC không cần Thuế —
   trước 20/11 task PDF của công ty tắt bị hoãn 15 phút mãi mãi, 0318793907 kẹt 151 HĐ). Site NCC ngắt mạch → task hẹn lại `DEFER_MINUTES` (10) bằng
   `release_tasks(delay_minutes=…)` — trả ngay thì mẻ sau nhận lại đúng task đó và quay vòng vô ích.
+- **MST gỡ khỏi WeInvoice tự tắt (26/11):** trước đây engine chỉ *thêm* MST từ WeInvoice; MST người dùng xoá trên màn Kết nối
+  Cục Thuế (xoá luôn mật khẩu) vẫn `active` → job XML cứ 15 phút báo "Thiếu mật khẩu … HDT_PASSWORD_…" (25/11: 5 MST của
+  lamine@gmail.com, gồm Sam Woon 3800335628). Nay `weinvoice_bridge.sync_removed_companies` (chạy cùng
+  `register_connected_companies` mỗi lượt) tắt MST có dòng trên WeInvoice mà mọi dòng đã xoá, và bật lại khi MST được kết nối
+  lại (CONNECTED + mật khẩu) — trừ MST trong `gdt_login_blocks` (vẫn bật bằng `unblock-login`). MST chỉ dùng `.env` (chưa từng có
+  trên WeInvoice) không bị đụng. Câu báo khi thiếu mật khẩu nói rõ "đã bị xoá khỏi WeInvoice" / "chưa có mật khẩu trên WeInvoice".
 - `job_runs` của worker (`worker-xml`/`worker-pdf`): 1 dòng mỗi **đợt việc**, mở khi nhận được việc,
   đóng khi hộp chờ rỗng hoặc quá 1 giờ; worker ngồi chờ không sinh dòng nào.
 - Lịch: `scripts\register_queue_tasks.ps1 -RunWhenLoggedOff` tạo 6 task (Sync Lists 06/14/22h,

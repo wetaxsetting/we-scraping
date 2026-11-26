@@ -105,7 +105,67 @@ def register_connected_companies(store) -> int:
         added += cur.rowcount
     if added:
         log.info("WeInvoice: thêm %d MST đã kết nối vào companies", added)
+    sync_removed_companies(store)
     return added
+
+
+def sync_removed_companies(store) -> tuple[list, list]:
+    """Giữ `companies.active` theo WeInvoice (26/11): (MST vừa tắt, MST vừa bật lại).
+
+    - MST có dòng trên WeInvoice nhưng **mọi dòng đều đã xoá** (`del_yn='Y'`, mật khẩu bị xoá theo) → tắt.
+      Trước đây engine chỉ biết thêm, nên MST người dùng gỡ khỏi WeInvoice vẫn chạy job XML và cứ 15 phút
+      báo "Thiếu mật khẩu" (25/11: 5 MST). Worker PDF vẫn tải PDF cho MST đã tắt (không cần Thuế).
+    - MST đang tắt mà nay lại có dòng CONNECTED + mật khẩu trên WeInvoice → bật lại. Trừ MST có trong
+      `gdt_login_blocks` (Thuế khoá / sai mật khẩu): vẫn chỉ bật bằng `unblock-login`.
+    MST chưa từng có trên WeInvoice (chỉ dùng `.env`) và dòng tạm `#upload:` không bị đụng tới.
+    """
+    schema = app_schema()
+    with store._tx() as cur:
+        if not _table_exists(cur, schema):
+            return [], []
+        cur.execute(f"""
+            UPDATE companies co SET active = false
+             WHERE co.active AND co.gdt_username NOT LIKE '#upload:%%'
+               AND EXISTS (SELECT 1 FROM {schema}.winv_cmpn_infm c WHERE c.cmpn_mst = co.company_mst)
+               AND NOT EXISTS (SELECT 1 FROM {schema}.winv_cmpn_infm c
+                                WHERE c.cmpn_mst = co.company_mst AND c.del_yn = 'N')
+            RETURNING co.company_mst
+        """)
+        off = sorted(r["company_mst"] for r in cur.fetchall())
+        cur.execute("SELECT to_regclass('gdt_login_blocks') IS NOT NULL AS ok")
+        has_blocks = bool(cur.fetchone()["ok"])
+        not_blocked = ("""AND NOT EXISTS (SELECT 1 FROM gdt_login_blocks b
+                                   WHERE b.gdt_username = co.gdt_username OR b.company_mst = co.company_mst)"""
+                       if has_blocks else "")
+        cur.execute(f"""
+            UPDATE companies co SET active = true
+             WHERE NOT co.active AND co.gdt_username NOT LIKE '#upload:%%'
+               AND EXISTS (SELECT 1 FROM {schema}.winv_cmpn_infm c
+                            WHERE c.cmpn_mst = co.company_mst AND c.conn_stts = 'CONNECTED'
+                              AND c.del_yn = 'N' AND c.gdt_pw_enc IS NOT NULL)
+               {not_blocked}
+            RETURNING co.company_mst
+        """)
+        on = sorted(r["company_mst"] for r in cur.fetchall())
+    if off:
+        log.info("WeInvoice: tắt %d MST đã bị xoá khỏi WeInvoice: %s", len(off), ", ".join(off))
+    if on:
+        log.info("WeInvoice: bật lại %d MST đã kết nối lại trên WeInvoice: %s", len(on), ", ".join(on))
+    return off, on
+
+
+def removed_from_weinvoice(store, mst: str) -> bool:
+    """MST từng có trên WeInvoice nhưng mọi dòng đã bị xoá (người dùng gỡ MST)."""
+    schema = app_schema()
+    with store._tx() as cur:
+        if not _table_exists(cur, schema):
+            return False
+        cur.execute(f"""
+            SELECT count(*) AS n, count(*) FILTER (WHERE del_yn = 'N') AS live
+              FROM {schema}.winv_cmpn_infm WHERE cmpn_mst = %s
+        """, (mst,))
+        row = cur.fetchone()
+    return bool(row and row["n"] and not row["live"])
 
 
 def mark_login_failed(store, mst: str, gdt_username: str | None, message: str) -> int:

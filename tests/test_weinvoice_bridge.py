@@ -115,3 +115,71 @@ def test_unconfigured_key_refuses_everything(client, monkeypatch):
 
 def test_missing_fields_is_400(client):
     assert _post(client, {"mst": "1201496252"}).status_code == 400
+
+
+# ---------------------------------------------------------------- companies.active theo WeInvoice (26/11)
+
+class _Cur:
+    """Cursor giả: ghi lại SQL, trả lần lượt các kết quả đã xếp hàng."""
+
+    def __init__(self, results):
+        self.sql, self.results = [], list(results)
+
+    def execute(self, sql, params=None):
+        self.sql.append(sql)
+
+    def fetchone(self):
+        return self.results.pop(0)
+
+    def fetchall(self):
+        return self.results.pop(0)
+
+
+class _StoreTx:
+    def __init__(self, cur):
+        self.cur = cur
+
+    def _tx(self):
+        cur = self.cur
+
+        class _Ctx:
+            def __enter__(self):
+                return cur
+
+            def __exit__(self, *a):
+                return False
+        return _Ctx()
+
+
+def test_removed_companies_are_deactivated_and_reconnected_ones_reactivated():
+    cur = _Cur([{"ok": True},                                   # winv_cmpn_infm có
+                [{"company_mst": "3800335628"}, {"company_mst": "0313894637"}],   # tắt
+                {"ok": True},                                   # gdt_login_blocks có
+                [{"company_mst": "3603054138"}]])               # bật lại
+    off, on = weinvoice_bridge.sync_removed_companies(_StoreTx(cur))
+    assert off == ["0313894637", "3800335628"] and on == ["3603054138"]
+    deactivate, _, reactivate = cur.sql[1], cur.sql[2], cur.sql[3]
+    # tắt: chỉ MST từng có trên WeInvoice mà không còn dòng nào chưa xoá; không đụng dòng tạm upload
+    assert "SET active = false" in deactivate and "del_yn = 'N'" in deactivate
+    assert "NOT EXISTS" in deactivate and "#upload:" in deactivate
+    # bật lại: cần dòng CONNECTED có mật khẩu, và MST không bị chặn đăng nhập (Thuế khoá)
+    assert "SET active = true" in reactivate and "conn_stts = 'CONNECTED'" in reactivate
+    assert "gdt_pw_enc IS NOT NULL" in reactivate and "gdt_login_blocks" in reactivate
+
+
+def test_reactivation_without_block_table_does_not_reference_it():
+    cur = _Cur([{"ok": True}, [], {"ok": False}, []])
+    assert weinvoice_bridge.sync_removed_companies(_StoreTx(cur)) == ([], [])
+    assert "gdt_login_blocks" not in cur.sql[3]
+
+
+def test_no_weinvoice_schema_touches_nothing():
+    cur = _Cur([{"ok": False}])
+    assert weinvoice_bridge.sync_removed_companies(_StoreTx(cur)) == ([], [])
+    assert len(cur.sql) == 1
+
+
+def test_removed_from_weinvoice_means_rows_exist_and_all_deleted():
+    assert weinvoice_bridge.removed_from_weinvoice(_StoreTx(_Cur([{"ok": True}, {"n": 1, "live": 0}])), "x") is True
+    assert weinvoice_bridge.removed_from_weinvoice(_StoreTx(_Cur([{"ok": True}, {"n": 2, "live": 1}])), "x") is False
+    assert weinvoice_bridge.removed_from_weinvoice(_StoreTx(_Cur([{"ok": True}, {"n": 0, "live": 0}])), "x") is False

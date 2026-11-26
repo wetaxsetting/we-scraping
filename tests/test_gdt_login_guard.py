@@ -243,3 +243,14 @@ def test_internal_api_refuses_known_rejected_password(monkeypatch):
     assert j["reason"] == "rejected" and "khóa" in j["message"] and calls == []
     j = c.post("/internal/gdt/login-test", json={"mst": "3603512483", "password": "new"}, headers=hdr).get_json()
     assert j["reason"] == "rejected" and calls == ["new"] and recorded == [("3603512483", "bad_credentials")]
+
+
+def test_removed_mst_says_so_instead_of_env_hint(monkeypatch, guard):
+    """26/11: MST gỡ khỏi WeInvoice → câu báo nói rõ, không gợi ý .env; vẫn không gọi Thuế."""
+    good = {"ok": True, "token": "jwt", "message": "", "attempts": 1, "reason": "ok"}
+    tp = _provider(monkeypatch, guard, good, env_pw=None, winv_pw=None)
+    monkeypatch.setattr(invoice_job.weinvoice_bridge, "removed_from_weinvoice", lambda store, mst: True)
+    with pytest.raises(invoice_job.LoginError, match="đã bị xoá khỏi WeInvoice") as exc:
+        tp.get()
+    assert "HDT_PASSWORD" not in str(exc.value)
+    assert guard["auth"] == []

@@ -176,8 +176,15 @@ def resolve_password(store, company: dict) -> tuple[str, str]:
     password = gdt_password(company)
     if password:
         return password, "env"
-    raise LoginError(f"Thiếu mật khẩu: kết nối MST {mst} trên WeInvoice "
-                     f"hoặc đặt HDT_PASSWORD_{re.sub(r'[^0-9A-Za-z]', '_', mst)} trong .env")
+    try:
+        removed = weinvoice_bridge.removed_from_weinvoice(store, mst)
+    except Exception:  # noqa: BLE001 — chỉ để chọn câu báo
+        removed = False
+    if removed:
+        raise LoginError(f"MST {mst} đã bị xoá khỏi WeInvoice (không còn mật khẩu Thuế) — "
+                         f"thêm lại MST trên WeInvoice để tiếp tục lấy hoá đơn")
+    raise LoginError(f"Thiếu mật khẩu: MST {mst} chưa có mật khẩu Thuế trên WeInvoice "
+                     f"(màn Kết nối Cục Thuế)")
 
 
 # ---------------------------------------------------------------------------
