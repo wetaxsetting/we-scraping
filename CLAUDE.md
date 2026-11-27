@@ -611,7 +611,9 @@ gom mọi trường giống "mã tra cứu/số bảo mật".
 - Không làm được qua link (ghi ở sheet WBS2 cột Ghi chú): reCAPTCHA v2 (L.C.S, EFY, HT, Máy tính & TT, New-Invoice, idoc,
   ACC Online, Safecert, CMC, Mobile-ID), v3 (FPT + đại lý oinvoice, VNPAY, Nhân Hòa, Haravan, Pancake, Taxnet, Bado), Turnstile
   (TS24, Bizzi), đăng nhập (VDSG, NCCA, ONTIK, TAX24 — `tax24.com.vn/einvoice` là cổng đăng nhập, `g_180x50_tax24` là captcha
-  đăng nhập), model chưa dùng được (Ngô Gia Phát, Bitware); Lạc Việt có model `g_100x36` (02/11) nhưng chưa có adapter. (NC9/ameinvoice: đã làm 03/11, adapter
+  đăng nhập; **27/11: Tax24 có trang xác minh công khai** `tax24.com.vn/thuedientu/xac-minh-hoa-don` — `POST` cùng URL với
+  `maKTra` = TTKhac "Mã Kiểm tra" + `_verifyCode` = captcha 180x50 `/thuedientu/servlet/ImageServlet`, kết quả có xem/tải XML;
+  danh mục NCC của api/web đã sửa link sang trang này, script `update-tax24-lookup-url-2026-11-27.sql` chờ DBA chạy), model chưa dùng được (Ngô Gia Phát, Bitware); Lạc Việt có model `g_100x36` (02/11) nhưng chưa có adapter. (NC9/ameinvoice: đã làm 03/11, adapter
   `ameinvoice`; chỉ CSDL 2023 của người bán 0314391594 lỗi phía NCC.) **Cần 1 mã
   thật mới làm được:** KK VAT, Nacencomm, 3A, TADU (ZK `/zkau`) — script dò để trong scratchpad phiên 27/10.
   FPT Shop `hddt.fptshop.com.vn`: tra bằng mã 16 số không cần captcha, nhưng bước tải trả **PDF của khách khác** → không làm.
