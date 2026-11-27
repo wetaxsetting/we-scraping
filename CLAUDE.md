@@ -646,7 +646,11 @@ link tra cứu trong TTKhac (`PortalLink`, `Trangtracuu`, "Link tra cứu ngư�
 (web gắn "!" cần mã) và ~4.900 link sai (3.935 cổng Thuế, ~1.000 website người bán, 17 link Thái Sơn cắt hỏng).
 `scripts/backfill_lookup_fields.py [--apply]` tính lại từ `parsed` (chỉ ĐIỀN mã khi trống; chạy thử in số HĐ đổi adapter):
 18/11 đã ghi 16.700 dòng, `ma_tra_cuu` 4.505 → 20.941. **Máy nào chạy job phải cập nhật code**, nếu không XML mới vẫn lưu
-theo cách cũ (chạy lại script là sửa). Cờ "!" cần mã (`needs_lookup_code` của backend, `ProviderLookup`) từ 18/11 tính
+theo cách cũ (chạy lại script là sửa). **27/11** (TS24 HĐ có mã mà web báo "Chưa có mã tra cứu"): quét 46.080 XML → 4.185 XML
+có mã dưới tên lạ — `MNHDon` "mã nhận hóa đơn" (TS24, 78), "Mã Kiểm tra" (Tax24 0102454468, 49), `Gkey` (WeTax/Genuwin, 3.949),
+`SecureKey` (SES, 20), `reservationCode` (Viettel, 83), `fkey` chữ thường (MobiFone, 6; danh sách tên cũ nay không phân biệt hoa/
+thường) — và 221 XML tải 18–19/11 bằng code cũ (máy chưa cập nhật). Chạy lại script: ghi 4.410 dòng, XML có mã 29.643 → 34.050.
+Không đổi được PDF gốc tự động cho TS24 (Turnstile), Tax24 (đăng nhập), Genuwin (tên miền chết) — chỉ để mã hiện đúng. Cờ "!" cần mã (`needs_lookup_code` của backend, `ProviderLookup`) từ 18/11 tính
 theo NCC: không gắn khi đã có PDF gốc hoặc NCC tra không cần mã (BKAV, Vĩnh Hy, Minh Khang, My Software, VININVOICE, Mắt Bão)
 → 8.550 → ~4.200 HĐ (WeTax 1.604, FPT 1.437, VNPT 966 chưa có cổng riêng, …: đúng là cần mã / link nhập tay).
 

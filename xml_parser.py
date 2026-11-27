@@ -583,7 +583,10 @@ _URL_IGNORE = ("w3.org", "example.org", "xmlsoap.org", "uri.etsi.org", "hoadondi
 # "Matracuu" (SmartSign), "Hilo-SearchKey", "Mã bảo mật" (VN-Invoice), "ID tra cứu" (NC9)… — so sánh sau khi bỏ dấu.
 _CODE_NAME_RE = re.compile(
     r"\b(ma (so )?tra cuu( hoa don)?|ma tc|id tra cuu|so bao mat|ma bao mat|ma (so )?bi mat"
-    r"|matracuu|keysearch|searchkey|hilo searchkey|searchinvoice)\b")
+    r"|matracuu|keysearch|searchkey|hilo searchkey|searchinvoice"
+    # thêm 27/11 (quét 46.080 XML, 4.185 có mã mà bị sót): `MNHDon` "mã nhận hóa đơn" (TS24), "Mã Kiểm tra" (Tax24),
+    # `Gkey` (WeTax/Genuwin), `SecureKey` (SES — "Mã số bí mật" trên trang tra cứu), `reservationCode` (Viettel)
+    r"|mnhdon|ma nhan hoa don|ma kiem tra|gkey|securekey|reservationcode)\b")
 # Trường TTKhac chứa link / tên miền trang tra cứu (có khi thiếu https://): "PortalLink" (HILO, Genuwin),
 # "Trangtracuu" (SmartSign), "Link tra cứu người bán" (Viettel), "DC TC" / "Địa chỉ tra cứu".
 _LINK_NAME_RE = re.compile(r"\b(portallink|portal link|trangtracuu|trang tra cuu|link tra cuu|dc tc|dia chi tra cuu|lookupurl)\b")
@@ -606,8 +609,11 @@ def _looks_like_link(v: str) -> bool:
 
 
 def _guess_ma_tra_cuu(tt_khac: dict) -> str:
+    by_lower = {}
+    for name, val in tt_khac.items():          # tên trường không phân biệt hoa/thường (MobiFone ghi `fkey`)
+        by_lower.setdefault(str(name).lower(), val)
     for field in _MA_TRA_CUU_FIELDS:
-        val = (tt_khac.get(field) or "").strip()
+        val = str(tt_khac.get(field) or by_lower.get(field.lower()) or "").strip()
         if val:
             return val
     for name, val in tt_khac.items():

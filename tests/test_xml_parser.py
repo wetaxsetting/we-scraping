@@ -260,6 +260,14 @@ def test_qr_chap_nhan_truong_rong_va_thieu_crc():
     ({"Hilo-SearchKey": "01K0THQ1AM7P32NRX9HPE53WMB"}, "01K0THQ1AM7P32NRX9HPE53WMB"),
     ({"MTCuu": "EXACT", "Mã số bí mật": "SECOND"}, "EXACT"),            # danh sách cũ vẫn được ưu tiên
     ({"Link tra cứu": "https://x.vn/a", "Ghi chú": "abc"}, ""),          # link không phải mã
+    # 27/11: tên trường bị sót (quét 46.080 XML trong DB)
+    ({"TIn": "A4", "MNHDon": "9glwSioXUgsPi", "MTDiep": "4350F46EB9C8"}, "9glwSioXUgsPi"),                   # TS24
+    ({"Mã Kiểm tra": "dxWNrfqEhU", "Tổng tiền sau thuế 10%": "319846450"}, "dxWNrfqEhU"),                    # Tax24
+    ({"Gkey": "o2fSZha z 4=", "PortalLink": "genuwinsolution.com"}, "o2fSZha z 4="),                        # WeTax/Genuwin
+    ({"SystemKey": "6933869bd922616b8163a2db", "SecureKey": "243404"}, "243404"),                            # SES
+    ({"Mã số": "PC0001-261118", "reservationCode": "859338"}, "859338"),                                     # Viettel
+    ({"fkey": "179517351444612096312237689925"}, "179517351444612096312237689925"),                          # MobiFone
+    ({"Mã cửa hàng": "1104", "Mã điểm bán": "100", "Mã khách hàng": "KH005057"}, ""),                         # không phải mã tra cứu
 ])
 def test_ma_tra_cuu_theo_ten_truong_tieng_viet(tt, code):
     assert xml_parser._guess_ma_tra_cuu(tt) == code
