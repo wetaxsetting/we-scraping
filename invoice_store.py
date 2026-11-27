@@ -547,6 +547,7 @@ class InvoiceStore:
               parsed.get("ma_tra_cuu") or None, parsed.get("lookup_url") or None,
               Json(parsed)))
         cls.replace_details(cur, invoice_id, parsed.get("hang_hoa") or [], nguon)
+        cls.mark_related_original(cur, invoice_id)
 
     def complete_pdf(self, task: dict, run_id: int | None, pdf_path: str, sha256: str,
                      source_id: str | None) -> None:
@@ -784,6 +785,50 @@ class InvoiceStore:
 
     _DETAIL_EXTRA_KEYS = ("tt_khac", "hang_dac_trung", "ten_hang", "don_vi_tt", "ty_gia",
                           "tien_thue_duoc_hoan", "tinh_chat_ten")
+
+    # HĐ gốc được nêu trong TTHDLQuan của HĐ thay thế (TCHDon=1) / điều chỉnh (TCHDon=2) — UI Spec v1.2 §3.15.
+    # Khóa: cùng công ty + MST bán + ký hiệu (bỏ số mẫu ở đầu ký hiệu 7 ký tự) + số (bỏ số 0 đầu) + mẫu số nếu có.
+    _RELATED_ORIGINALS_SQL = """
+        SELECT o.id, CASE WHEN r.tchd = '2' THEN 5 ELSE 4 END AS new_tthai
+          FROM (SELECT i.id, i.company_mst, i.nbmst, jj.j->>'tinh_chat' AS tchd,
+                       upper(CASE WHEN jj.j->>'ky_hieu' ~ '^[0-9][A-Za-z0-9]{{6}}$'
+                                  THEN substr(jj.j->>'ky_hieu', 2) ELSE jj.j->>'ky_hieu' END) AS sym,
+                       COALESCE(CASE WHEN jj.j->>'ky_hieu_mau' ~ '^[0-9]+$' THEN (jj.j->>'ky_hieu_mau')::int END,
+                                CASE WHEN jj.j->>'ky_hieu' ~ '^[0-9][A-Za-z0-9]{{6}}$'
+                                     THEN left(jj.j->>'ky_hieu', 1)::int END) AS tpl,
+                       NULLIF(ltrim(regexp_replace(COALESCE(jj.j->>'so_hd', ''), '[^0-9]', '', 'g'), '0'), '')::bigint
+                           AS no
+                  FROM invoices i
+                  JOIN invoice_xml x ON x.invoice_id = i.id
+                 CROSS JOIN LATERAL (SELECT x.parsed->'thong_tin_chung'->'hoa_don_lien_quan' AS j) jj
+                 WHERE {scope} AND jsonb_typeof(jj.j) = 'object' AND jj.j->>'tinh_chat' IN ('1', '2')) r
+          JOIN invoices o ON o.company_mst = r.company_mst AND o.nbmst = r.nbmst AND upper(o.khhdon) = r.sym
+                         AND o.shdon = r.no AND (r.tpl IS NULL OR o.khmshdon = r.tpl) AND o.id <> r.id
+         WHERE COALESCE(o.tthai, 1) = 1
+    """
+
+    @classmethod
+    def mark_related_original(cls, cur, invoice_id: int) -> int:
+        """
+        HĐ vừa lưu XML thay thế / điều chỉnh 1 HĐ đã có trong DB → HĐ gốc thành "Bị thay thế" (4) / "Bị điều chỉnh" (5).
+        Chỉ nâng HĐ đang "gốc" (tthai NULL/1): không hạ trạng thái Cục Thuế đã trả (vd Đã huỷ). Dòng `invoices` không được
+        cập nhật lại từ danh sách GDT (upsert bỏ qua HĐ đã có), nên HĐ gốc lưu trước khi bị thay thế giữ mãi "gốc".
+        """
+        cur.execute("UPDATE invoices o SET tthai = u.new_tthai FROM ("
+                    + cls._RELATED_ORIGINALS_SQL.format(scope="i.id = %s") + ") u WHERE o.id = u.id",
+                    (invoice_id,))
+        return cur.rowcount
+
+    def related_originals(self, apply: bool = False) -> list[dict]:
+        """HĐ gốc còn "gốc" dù đã có HĐ thay thế / điều chỉnh trong DB (lệnh `related-status`); `apply` = sửa luôn."""
+        sql = self._RELATED_ORIGINALS_SQL.format(scope="TRUE")
+        with self._tx() as cur:
+            cur.execute("SELECT u.id, u.new_tthai, o.company_mst, o.khhdon, o.shdon FROM (" + sql + ") u "
+                        "JOIN invoices o ON o.id = u.id ORDER BY o.company_mst, o.id")
+            rows = cur.fetchall()
+            if apply and rows:
+                cur.execute("UPDATE invoices o SET tthai = u.new_tthai FROM (" + sql + ") u WHERE o.id = u.id")
+        return rows
 
     @classmethod
     def replace_details(cls, cur, invoice_id: int, items: list, nguon: str) -> None:

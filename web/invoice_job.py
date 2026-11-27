@@ -1508,6 +1508,17 @@ def cmd_gdt_detail(store, args) -> int:
     return 0 if not stats["failed"] and not stats["skipped"] else 1
 
 
+def cmd_related_status(store, args) -> int:
+    """HĐ gốc đã có HĐ thay thế / điều chỉnh (TTHDLQuan) mà vẫn "gốc" → Bị thay thế / Bị điều chỉnh (UI Spec v1.2 §3.15)."""
+    rows = store.related_originals(apply=args.apply)
+    by = Counter("Bị thay thế" if r["new_tthai"] == 4 else "Bị điều chỉnh" for r in rows)
+    print(f"HĐ gốc cần đổi trạng thái: {len(rows)} ({', '.join(f'{k} {v}' for k, v in by.items()) or '0'})"
+          + ("" if args.apply else " — chạy thử, chưa ghi (thêm --apply)"))
+    for r in rows[:20]:
+        print(f"  {r['company_mst']} {r['khhdon']}-{r['shdon']} → {r['new_tthai']}")
+    return 0
+
+
 def cmd_set_provider(store, args) -> int:
     n = store.set_provider_source(args.mst_tcgp, args.source_id, args.name)
     if args.source_id and args.source_id not in pdf_providers.available():
@@ -1620,6 +1631,9 @@ def main(argv=None) -> int:
     p.add_argument("--limit", type=int)
     p.add_argument("--redo", action="store_true", help="xem lại cả HĐ đã xem")
 
+    p = sub.add_parser("related-status", help="HĐ gốc đã bị thay thế / điều chỉnh (theo XML) → đổi trạng thái")
+    p.add_argument("--apply", action="store_true", help="ghi thật (mặc định chạy thử)")
+
     p = sub.add_parser("clean-temp", help="xóa ZIP gốc trong temp/ của HĐ đã dựng xong PDF Thuế")
     p.add_argument("--company", help="chỉ 1 MST")
     p.add_argument("--apply", action="store_true", help="xóa thật (mặc định chỉ thống kê)")
@@ -1645,7 +1659,7 @@ def main(argv=None) -> int:
             "init-db": cmd_init_db, "add-company": cmd_add_company, "tick": cmd_tick,
             "xml": cmd_xml, "pdf": cmd_pdf, "mail": cmd_mail, "sweep": cmd_sweep, "status": cmd_status, "requeue": cmd_requeue,
             "set-provider": cmd_set_provider, "sync-lists": cmd_sync_lists, "worker": cmd_worker,
-            "login-blocks": cmd_login_blocks, "unblock-login": cmd_unblock_login, "gdt-pdf": cmd_gdt_pdf, "gdt-detail": cmd_gdt_detail,
+            "login-blocks": cmd_login_blocks, "unblock-login": cmd_unblock_login, "gdt-pdf": cmd_gdt_pdf, "gdt-detail": cmd_gdt_detail, "related-status": cmd_related_status,
             "clean-temp": cmd_clean_temp,
         }[args.cmd](store, args)
     finally:

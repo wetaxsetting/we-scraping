@@ -311,6 +311,7 @@ python -X utf8 web/invoice_job.py requeue --status dead|no_source [--type xml|pd
 python -X utf8 web/invoice_job.py set-provider --mst-tcgp X --source-id Y
 python -X utf8 web/invoice_job.py clean-temp [--company MST] [--apply]  # xóa ZIP cũ trong temp/ của HĐ đã có PDF Thuế (mặc định chỉ thống kê)
 python -X utf8 web/invoice_job.py gdt-detail [--company MST] [--limit N] [--redo]  # HĐ Thuế không có XML: lưu chi tiết từ API "Xem hóa đơn" GDT (gọi GDT)
+python -X utf8 web/invoice_job.py related-status [--apply]  # HĐ gốc đã có HĐ thay thế/điều chỉnh (XML) mà vẫn "gốc" → Bị thay thế/Bị điều chỉnh (không gọi GDT)
 # API nội bộ cho WeInvoice backend (06/11): đăng nhập thử GDT khi user thêm MST — chạy thường trực cạnh job
 python -X utf8 web/internal_api.py    # POST /internal/gdt/login-test, X-Api-Key = SCRAPING_INTERNAL_API_KEY, mặc định 127.0.0.1:8090
 # Worker yêu cầu WeInvoice (09/11): SYNC / FETCH_XML / FETCH_PDF / IMPORT / TEST_DATA từ weinvoice.winv_engn_rqst — chạy thường trực
@@ -541,6 +542,12 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
   (sco-query, cần captcha) chưa làm. Tồn 3.066 HĐ `summary_only` (2.878 từ Excel): `gdt-detail` (cần `init-db` trước để nới
   CHECK `nguon`; chưa chạy thì lưu lỗi chỉ ghi log). Tắt: `INVOICE_GDT_DETAIL=0`. API/web đọc thẳng `invoice_details`
   nên popup, Excel, kê khai VAT hiện các dòng này — chưa có nhãn "từ bảng tổng hợp".
+- **Trạng thái HĐ gốc khi có HĐ thay thế / điều chỉnh** (27/11, UI Spec v1.2 §3.15): dòng `invoices` không bao giờ cập nhật
+  lại từ danh sách GDT (upsert bỏ qua HĐ đã có), nên HĐ gốc lưu trước khi bị thay thế giữ mãi `tthai` 1 (đếm 27/11: 55/400 HĐ
+  gốc có trong DB; 345 còn lại GDT đã trả 4/5). Nay `_save_xml` (mọi đường: Thuế, mail, tải lên, cổng NCC) gọi
+  `mark_related_original`: XML có `TTHDLQuan` TCHDon 1/2 → HĐ gốc cùng công ty + MST bán + ký hiệu (bỏ số mẫu đầu ký hiệu 7 ký
+  tự) + số (bỏ 0 đầu) + mẫu số → 4 / 5, **chỉ khi đang 1/NULL** (không hạ Đã huỷ). HĐ gốc về sau HĐ thay thế không tự nâng
+  (phải quét XML cả công ty mỗi lần lưu) → `related-status [--apply]` định kỳ.
 - Endpoint xuất Excel (URL chép từ trình duyệt): bán ra `query/invoices/export-excel`; mua vào
   `export-excel-sold` + `type=purchase`; MTT dùng `sco-query`; cổng gửi `ttxly==5` kèm 4 dấu cách.
   File do Apache POI tạo ghi `<dimension ref="A1"/>` → **không đọc bằng openpyxl `read_only`** (chỉ thấy 1 dòng).
