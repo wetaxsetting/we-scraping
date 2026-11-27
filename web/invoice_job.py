@@ -66,6 +66,7 @@ from dotenv import load_dotenv                    # noqa: E402
 load_dotenv(ROOT / ".env")
 
 import api_client                                 # noqa: E402
+import gdt_detail                                 # noqa: E402
 import gdt_login_guard                            # noqa: E402
 import gdt_pdf                                    # noqa: E402
 import job_policy                                 # noqa: E402
@@ -466,6 +467,49 @@ def _no_xml_on_gdt(task: dict, kind: str) -> bool:
             and str(task.get("khhdon") or "").upper().startswith("K"))
 
 
+def gdt_detail_enabled() -> bool:
+    """INVOICE_GDT_DETAIL=0 tắt việc xem chi tiết HĐ trên GDT khi Thuế không có XML (mặc định bật)."""
+    return os.getenv("INVOICE_GDT_DETAIL", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def fetch_gdt_detail(store, tokens, task: dict, raise_errors: bool = False) -> dict | None:
+    """
+    HĐ Thuế không có XML → API "Xem hóa đơn" của GDT → lưu phần đầu + dòng hàng (nguon='gdt_detail').
+    Trả JSON GDT (để biết hthdon) hoặc None khi không gọi / không lấy được. Lỗi chỉ ghi log: đây là
+    nguồn dự phòng, không được làm hỏng task XML (`raise_errors`: lệnh `gdt-detail` tự đếm lỗi GDT).
+    Chưa làm cho HĐ máy tính tiền (sco-query cần captcha).
+    """
+    mst = tokens.mst
+    if not gdt_detail_enabled() or str(task.get("sub_type") or "").endswith("-mtt"):
+        return None
+    try:
+        js = call_gdt(tokens, lambda tok: api_client.fetch_invoice_detail_json(
+            tok, task["nbmst"], task["khhdon"], int(task["shdon"]), int(task["khmshdon"] or 1)))
+    except LoginError as e:
+        if raise_errors:
+            raise
+        log.warning("[%s] Chi tiết GDT %s: không đăng nhập được (%s)", mst, _label(task), e)
+        return None
+    except Exception as e:  # noqa: BLE001
+        if raise_errors:
+            raise
+        log.warning("[%s] Chi tiết GDT %s lỗi %s: %s", mst, _label(task), classify(e), e)
+        return None
+    items = gdt_detail.items(js)
+    try:
+        saved = store.save_gdt_detail(task["id"], gdt_detail.header(js), items, gdt_detail.hthdon(js))
+    except Exception as e:  # noqa: BLE001  (vd DB chưa chạy init-db: CHECK nguon chưa có 'gdt_detail')
+        if is_connection_error(e):
+            raise
+        log.warning("[%s] Không lưu được chi tiết GDT %s: %s", mst, _label(task), e)
+        return None
+    if saved:
+        log.info("[%s] Chi tiết GDT %s: hthdon %s, %d dòng%s, tổng %s", mst, _label(task), js.get("hthdon"),
+                 len(items), " (tổng theo thuế suất, bảng tổng hợp)" if gdt_detail.summary_table(js) else "",
+                 _money(js.get("tgtttbso")))
+    return js
+
+
 def process_xml(store, company, tokens, breaker, run_id, limit, stats, out_dir) -> None:
     mst = company["company_mst"]
     handled = 0
@@ -505,10 +549,21 @@ def xml_batch(store, company, tokens, breaker, run_id, batch, stats, out_dir,
                 wait = min(RATE_LIMIT_PAUSE_SECONDS * 2 ** (breaker.consecutive - 1), RATE_LIMIT_PAUSE_MAX)
                 log.warning("[%s] GDT 429 → nghỉ %d s", mst, wait)
                 time.sleep(wait)
-            if _no_xml_on_gdt(task, kind):
+            detail = fetch_gdt_detail(store, tokens, task) if _no_xml_on_gdt(task, kind) else None
+            if detail is not None:
+                stats["xml_gdt_detail"] += 1
+            if detail is not None and not gdt_detail.summary_table(detail):
+                # GDT xác nhận HĐ thường (hthdon≠2) → XML chỉ chưa sẵn sàng: thử tải lại theo lịch not_ready
+                status = store.fail_task(task, "not_ready", f"XML chưa có trên GDT (500), HĐ hthdon="
+                                         f"{detail.get('hthdon')} → đã lưu chi tiết từ GDT, tải lại XML sau", run_id)
+                stats["xml_failed"] += 1
+                log.info("[%s] XML %s: Thuế chưa có XML nhưng HĐ không gửi theo bảng tổng hợp → %s, tải lại sau",
+                         mst, _label(task), status)
+            elif _no_xml_on_gdt(task, kind):
                 store.mark_no_source(task, "HĐ không mã, Thuế không có XML (500) → coi như gửi "
-                                     "theo bảng tổng hợp; chờ XML/PDF từ mail", run_id,
-                                     kind="summary_only")
+                                     "theo bảng tổng hợp; chờ XML/PDF từ mail"
+                                     + ("; đã lưu tổng theo thuế suất từ GDT" if detail is not None else ""),
+                                     run_id, kind="summary_only")
                 stats["xml_summary_only"] += 1
                 log.info("[%s] XML %s_%s_%s: HĐ không mã, Thuế không có XML → chờ nguồn khác",
                          mst, task["khmshdon"], task["khhdon"], task["shdon"])
@@ -1393,6 +1448,66 @@ def cmd_gdt_pdf(store, args) -> int:
     return 0 if not failed else 1
 
 
+def cmd_gdt_detail(store, args) -> int:
+    """
+    Xem chi tiết trên GDT cho HĐ Thuế không có XML (task XML `summary_only`) chưa xem lần nào: lưu phần
+    đầu + dòng hàng (nguon='gdt_detail'). HĐ GDT báo không gửi theo bảng tổng hợp (hthdon≠2) → đưa task XML
+    về hộp chờ để tải lại XML. Gọi GDT bằng token đang có, hết hạn thì đăng nhập như job.
+    """
+    rows = store.gdt_detail_candidates(args.company, args.limit, redo=args.redo)
+    companies = {c["company_mst"]: c for c in store.active_companies()}
+    stats = Counter()
+    run_id = store.start_run("gdt-detail")
+    by_company: dict[str, list] = {}
+    for r in rows:
+        by_company.setdefault(r["company_mst"], []).append(r)
+    log.info("Chi tiết GDT: %d HĐ của %d công ty", len(rows), len(by_company))
+    for mst, tasks in by_company.items():
+        if mst not in companies:
+            continue
+        tokens = TokenProvider(store, companies[mst], stats)
+        breaker = job_policy.CircuitBreaker()
+        for i, task in enumerate(tasks):
+            if breaker.open:
+                log.warning("[%s] GDT lỗi liên tiếp → dừng công ty này, còn %d HĐ", mst, len(tasks) - i)
+                stats["skipped"] += len(tasks) - i
+                break
+            try:
+                js = fetch_gdt_detail(store, tokens, task, raise_errors=True)
+            except LoginError as e:
+                log.warning("[%s] Không đăng nhập được GDT: %s → bỏ qua %d HĐ", mst, e, len(tasks) - i)
+                stats["skipped"] += len(tasks) - i
+                break
+            except Exception as e:  # noqa: BLE001
+                kind = classify(e)
+                breaker.record(False, kind)
+                stats["failed"] += 1
+                log.warning("[%s] Chi tiết GDT %s lỗi %s: %s", mst, _label(task), kind, e)
+                if kind == "rate_limit":
+                    wait = min(RATE_LIMIT_PAUSE_SECONDS * 2 ** (breaker.consecutive - 1), RATE_LIMIT_PAUSE_MAX)
+                    log.warning("[%s] GDT 429 → nghỉ %d s", mst, wait)
+                    time.sleep(wait)
+                time.sleep(XML_THROTTLE_SECONDS)
+                continue
+            breaker.record(True)
+            if js is None:
+                stats["not_saved"] += 1
+            elif gdt_detail.summary_table(js):
+                stats["summary"] += 1
+            else:
+                store.requeue_tasks([task["task_id"]])
+                stats["full_requeued"] += 1
+                log.info("[%s] %s không gửi theo bảng tổng hợp (hthdon=%s) → tải lại XML", mst, _label(task),
+                         js.get("hthdon"))
+            time.sleep(XML_THROTTLE_SECONDS)
+    summary = {k: stats[k] for k in ("summary", "full_requeued", "not_saved", "failed", "skipped")}
+    store.finish_run(run_id, "partial" if stats["failed"] or stats["skipped"] else "ok", summary)
+    print(f"Chi tiết GDT: {len(rows)} HĐ → bảng tổng hợp (lưu tổng theo thuế suất) {stats['summary']}, "
+          f"HĐ thường (đã lưu dòng hàng, tải lại XML) {stats['full_requeued']}, không lưu {stats['not_saved']}, "
+          f"lỗi {stats['failed']}, bỏ qua {stats['skipped']}")
+    return 0 if not stats["failed"] and not stats["skipped"] else 1
+
+
 def cmd_set_provider(store, args) -> int:
     n = store.set_provider_source(args.mst_tcgp, args.source_id, args.name)
     if args.source_id and args.source_id not in pdf_providers.available():
@@ -1500,6 +1615,11 @@ def main(argv=None) -> int:
     p.add_argument("--all", action="store_true", help="cả HĐ đã có PDF gốc NCC")
     p.add_argument("--redo", action="store_true", help="dựng lại cả bản đã có (sau khi đổi cách dựng)")
 
+    p = sub.add_parser("gdt-detail", help="xem chi tiết trên GDT cho HĐ Thuế không có XML (bảng tổng hợp)")
+    p.add_argument("--company", help="chỉ 1 MST")
+    p.add_argument("--limit", type=int)
+    p.add_argument("--redo", action="store_true", help="xem lại cả HĐ đã xem")
+
     p = sub.add_parser("clean-temp", help="xóa ZIP gốc trong temp/ của HĐ đã dựng xong PDF Thuế")
     p.add_argument("--company", help="chỉ 1 MST")
     p.add_argument("--apply", action="store_true", help="xóa thật (mặc định chỉ thống kê)")
@@ -1525,7 +1645,7 @@ def main(argv=None) -> int:
             "init-db": cmd_init_db, "add-company": cmd_add_company, "tick": cmd_tick,
             "xml": cmd_xml, "pdf": cmd_pdf, "mail": cmd_mail, "sweep": cmd_sweep, "status": cmd_status, "requeue": cmd_requeue,
             "set-provider": cmd_set_provider, "sync-lists": cmd_sync_lists, "worker": cmd_worker,
-            "login-blocks": cmd_login_blocks, "unblock-login": cmd_unblock_login, "gdt-pdf": cmd_gdt_pdf,
+            "login-blocks": cmd_login_blocks, "unblock-login": cmd_unblock_login, "gdt-pdf": cmd_gdt_pdf, "gdt-detail": cmd_gdt_detail,
             "clean-temp": cmd_clean_temp,
         }[args.cmd](store, args)
     finally:

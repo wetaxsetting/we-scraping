@@ -310,6 +310,7 @@ python -X utf8 web/invoice_job.py status        # hộp chờ, lỗi, NCC chưa 
 python -X utf8 web/invoice_job.py requeue --status dead|no_source [--type xml|pdf] [--mst-tcgp X]
 python -X utf8 web/invoice_job.py set-provider --mst-tcgp X --source-id Y
 python -X utf8 web/invoice_job.py clean-temp [--company MST] [--apply]  # xóa ZIP cũ trong temp/ của HĐ đã có PDF Thuế (mặc định chỉ thống kê)
+python -X utf8 web/invoice_job.py gdt-detail [--company MST] [--limit N] [--redo]  # HĐ Thuế không có XML: lưu chi tiết từ API "Xem hóa đơn" GDT (gọi GDT)
 # API nội bộ cho WeInvoice backend (06/11): đăng nhập thử GDT khi user thêm MST — chạy thường trực cạnh job
 python -X utf8 web/internal_api.py    # POST /internal/gdt/login-test, X-Api-Key = SCRAPING_INTERNAL_API_KEY, mặc định 127.0.0.1:8090
 # Worker yêu cầu WeInvoice (09/11): SYNC / FETCH_XML / FETCH_PDF / IMPORT / TEST_DATA từ weinvoice.winv_engn_rqst — chạy thường trực
@@ -531,6 +532,15 @@ hệ thống chỉ chạy 1 việc 1 lúc. Mô hình mới tách người sinh v
 - **File Excel danh sách thiếu `hthdon`** (chỉ 17–19 cột, API JSON có 150 trường). Nên HĐ không mã (`K...`)
   lấy từ Excel được tải thử XML 1 lần: GDT trả 500 → `no_source`/`summary_only` luôn, không thử lại 10 ngày
   (dữ liệu thật: 19/19 HĐ hthdon=2 trả 500, 30/30 HĐ không mã hthdon=0 tải được).
+- **API "Xem hóa đơn" `GET /query/invoices/detail`** (cùng tham số export-xml; thêm 27/11, `gdt_detail.py`): trả JSON cả khi
+  Thuế không có XML. Đo 10/10 HĐ: hthdon=2 → phần đầu + **mỗi thuế suất 1 dòng** `hdhhdvu` (thành tiền, tiền thuế; đôi khi
+  tên dịch vụ / đơn vị / số lượng, vd điện kWh) — không có dòng hàng thật; HĐ thường → đủ dòng hàng như XML. Khi HĐ `K…`
+  từ Excel tải XML gặp 500, `xml_batch` gọi API này: lưu dòng `invoice_details.nguon='gdt_detail'` + phần đầu trộn vào
+  `list_raw` (dấu `_gdt_detail_at`, điền `invoices.hthdon`); hthdon=2 → vẫn `summary_only`, hthdon≠2 → `not_ready` (tải
+  lại XML theo lịch) — vd WinMart K26TTM-2254 là hthdon=0 bị coi nhầm là bảng tổng hợp. XML thật về sau ghi đè. HĐ MTT
+  (sco-query, cần captcha) chưa làm. Tồn 3.066 HĐ `summary_only` (2.878 từ Excel): `gdt-detail` (cần `init-db` trước để nới
+  CHECK `nguon`; chưa chạy thì lưu lỗi chỉ ghi log). Tắt: `INVOICE_GDT_DETAIL=0`. API/web đọc thẳng `invoice_details`
+  nên popup, Excel, kê khai VAT hiện các dòng này — chưa có nhãn "từ bảng tổng hợp".
 - Endpoint xuất Excel (URL chép từ trình duyệt): bán ra `query/invoices/export-excel`; mua vào
   `export-excel-sold` + `type=purchase`; MTT dùng `sco-query`; cổng gửi `ttxly==5` kèm 4 dấu cách.
   File do Apache POI tạo ghi `<dimension ref="A1"/>` → **không đọc bằng openpyxl `read_only`** (chỉ thấy 1 dòng).

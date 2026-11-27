@@ -639,6 +639,36 @@ def _download_zip(token: str, nbmst: str, khhdon: str,
     return content
 
 
+def fetch_invoice_detail_json(token: str, nbmst: str, khhdon: str, shdon: int, khmshdon: int) -> dict:
+    """
+    Chi tiết HĐ dạng JSON như nút "Xem hóa đơn" của cổng (`/query/invoices/detail`), kể cả HĐ không
+    có XML: HĐ gửi theo bảng tổng hợp (hthdon=2) trả phần đầu + mỗi thuế suất 1 dòng `hdhhdvu`, HĐ
+    thường trả đủ dòng hàng (đo 27/11/2026, 10/10 HĐ). Chưa thử HĐ máy tính tiền (sco-query).
+    """
+    params = {"nbmst": nbmst, "khhdon": khhdon, "shdon": shdon, "khmshdon": khmshdon}
+    try:
+        r = _gdt_session.get(f"{API_BASE}/query/invoices/detail", headers=_h(token), params=params, timeout=60)
+    except requests.exceptions.Timeout:
+        raise GDTError("GDT không phản hồi (timeout 60s)", kind="network")
+    except requests.exceptions.ConnectionError as e:
+        raise GDTError(f"Lỗi kết nối GDT: {e}", kind="network")
+    if r.status_code in (401, 403):
+        raise GDTAuthError()
+    if r.status_code == 429:
+        raise GDTError("429 – Quá nhiều request, cần chờ", kind="rate_limit")
+    if r.status_code in (502, 503, 504):
+        raise GDTError(f"GDT quá tải ({r.status_code})", kind="server")
+    if not r.ok:
+        raise GDTError(f"GDT lỗi {r.status_code} khi xem chi tiết HĐ", kind="other")
+    try:
+        js = r.json()
+    except ValueError:
+        raise GDTError("GDT trả chi tiết HĐ không phải JSON", kind="bad_content")
+    if not isinstance(js, dict) or not js.get("khhdon"):
+        raise GDTError(f"GDT không có chi tiết HĐ: {str(js)[:200]}", kind="bad_content")
+    return js
+
+
 def download_invoice_zip(token: str, inv: dict) -> bytes:
     """Tải ZIP của 1 hóa đơn từ dòng của API danh sách. Lỗi → GDTError có kind."""
     return _download_zip(

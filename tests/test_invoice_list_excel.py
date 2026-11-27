@@ -489,6 +489,7 @@ def test_k_invoice_without_xml_waits_for_mail_instead_of_retrying(monkeypatch, t
         raise api_client.GDTError("XML không có sẵn trên GDT (500)", kind="not_ready")
     monkeypatch.setattr(invoice_job.api_client, "download_invoice_zip", no_xml)
     monkeypatch.setattr(invoice_job, "XML_THROTTLE_SECONDS", 0)
+    monkeypatch.setenv("INVOICE_GDT_DETAIL", "0")    # xem chi tiết GDT: tests/test_gdt_detail.py
     base = {"nbmst": "0300555450", "khmshdon": 1, "sub_type": "mua-khma", "direction": "mua",
             "ngay_lap": date(2026, 10, 9), "attempts": 0}
     tasks = [dict(base, task_id=1, khhdon="K26TAN", shdon=1, hthdon=None),   # từ Excel → chờ mail

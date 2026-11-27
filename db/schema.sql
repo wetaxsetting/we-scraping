@@ -103,15 +103,17 @@ CREATE TABLE IF NOT EXISTS invoice_details (
     ma_nhom_nganh TEXT,
     extra         JSONB,                     -- tt_khac của dòng, hàng hóa đặc trưng, tỷ giá dòng...
     nguon         TEXT NOT NULL DEFAULT 'xml'
-                  CHECK (nguon IN ('xml', 'xml_email', 'xml_upload', 'pdf')),
+                  CHECK (nguon IN ('xml', 'xml_email', 'xml_upload', 'gdt_detail', 'pdf')),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (invoice_id, line_no)
 );
 -- 'xml_upload' (09/11/2026): XML người dùng tải lên WeInvoice (worker web/weinvoice_worker.py).
+-- 'gdt_detail' (27/11/2026): API "Xem hóa đơn" của GDT khi Thuế không có XML (gdt_detail.py) —
+-- HĐ bảng tổng hợp chỉ có mỗi thuế suất 1 dòng. XML về sau ghi đè.
 -- DB tạo trước đó có CHECK cũ → thay bằng CHECK mới (chỉ nới, không đụng dữ liệu).
 ALTER TABLE invoice_details DROP CONSTRAINT IF EXISTS invoice_details_nguon_check;
 ALTER TABLE invoice_details ADD CONSTRAINT invoice_details_nguon_check
-    CHECK (nguon IN ('xml', 'xml_email', 'xml_upload', 'pdf'));
+    CHECK (nguon IN ('xml', 'xml_email', 'xml_upload', 'gdt_detail', 'pdf'));
 
 CREATE TABLE IF NOT EXISTS invoice_xml (
     invoice_id BIGINT PRIMARY KEY REFERENCES invoices ON DELETE CASCADE,

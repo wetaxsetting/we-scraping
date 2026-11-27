@@ -403,6 +403,53 @@ class InvoiceStore:
                 ON CONFLICT (invoice_id, task_type) DO NOTHING
             """, (task["id"],))
 
+    def save_gdt_detail(self, invoice_id: int, header: dict, items: list, hthdon: int | None) -> bool:
+        """
+        Chi tiết HĐ từ API "Xem hóa đơn" của GDT (gdt_detail.py) cho HĐ chưa có XML: phần đầu trộn vào
+        `list_raw` (không ghi đè giá trị đang có), `hthdon` điền khi còn trống, dòng hàng nguon='gdt_detail'.
+        HĐ đã có XML / dòng hàng từ nguồn khác → False, không đụng gì.
+        """
+        with self._tx() as cur:
+            cur.execute("""
+                SELECT EXISTS (SELECT 1 FROM invoice_xml WHERE invoice_id=%(id)s)
+                    OR EXISTS (SELECT 1 FROM invoice_details WHERE invoice_id=%(id)s AND nguon <> 'gdt_detail')
+                    AS has_xml
+            """, {"id": invoice_id})
+            if cur.fetchone()["has_xml"]:
+                return False
+            cur.execute("""
+                UPDATE invoices SET list_raw = %s::jsonb || COALESCE(list_raw, '{}'::jsonb)
+                                               || jsonb_build_object('_gdt_detail_at', %s::text),
+                                    hthdon = COALESCE(hthdon, %s)
+                 WHERE id=%s
+            """, (Json(header), header.get("_gdt_detail_at"), hthdon, invoice_id))
+            self.replace_details(cur, invoice_id, items, "gdt_detail")
+        return True
+
+    def gdt_detail_candidates(self, company_mst: str | None = None, limit: int | None = None,
+                              redo: bool = False) -> list[dict]:
+        """HĐ Thuế không có XML (task XML `summary_only`) chưa xem chi tiết GDT (`list_raw._gdt_detail_at`)."""
+        sql = """
+            SELECT i.*, t.id AS task_id, t.attempts
+              FROM tasks t
+              JOIN invoices i ON i.id = t.invoice_id
+              JOIN companies c ON c.company_mst = i.company_mst AND c.active
+             WHERE t.task_type='xml' AND t.status='no_source' AND t.error_kind='summary_only'
+               AND NOT EXISTS (SELECT 1 FROM invoice_xml x WHERE x.invoice_id = i.id)
+               AND (%s OR NOT (COALESCE(i.list_raw, '{}'::jsonb) ? '_gdt_detail_at'))
+        """
+        params: list = [redo]
+        if company_mst:
+            sql += " AND i.company_mst = %s"
+            params.append(company_mst)
+        sql += " ORDER BY i.company_mst, i.ngay_lap DESC NULLS LAST, i.id DESC"
+        if limit:
+            sql += " LIMIT %s"
+            params.append(limit)
+        with self._tx() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
     def set_gdt_pdf(self, invoice_id: int, pdf_path: str) -> None:
         """PDF "bản của Thuế" (gdt_pdf.py) cho HĐ đã có XML."""
         with self._tx() as cur:
